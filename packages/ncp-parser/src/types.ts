@@ -24,7 +24,14 @@ export interface ParsedPictureControl {
   readonly sourceName: string;
   readonly basePictureControl: EnumValue;
   readonly sharpening: number;
+  /**
+   * Color-adjustment value (0x80-centered). NOT meaningful when
+   * basePictureControl is 'Monochrome' — for monochrome bases the source bytes
+   * are junk (typically 0xff). Consumers (e.g. the image engine) must key off
+   * basePictureControl and ignore saturation/hue for monochrome pictures.
+   */
   readonly saturation: number;
+  /** See saturation — likewise not meaningful for monochrome bases. */
   readonly hue: number;
   readonly monochromeFilter: EnumValue | null;
   readonly toningType: EnumValue | null;

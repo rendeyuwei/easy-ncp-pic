@@ -23,6 +23,10 @@ export function readAdjustments(reader: BinaryReader): Adjustments {
   }
 
   const sharpening = reader.uint8(ADJ.sharpening) - CENTER;
+  // saturation/hue are color-mode adjustments. For monochrome bases the source
+  // bytes are junk (typically 0xff -> 127); they are decoded and returned
+  // verbatim, but consumers must ignore them when basePictureControl is
+  // 'Monochrome' (see ParsedPictureControl.saturation in types.ts).
   const saturation = reader.uint8(ADJ.saturation) - CENTER;
   const hue = reader.uint8(ADJ.hue) - CENTER;
 

@@ -21,4 +21,18 @@ describe('parseNcp', () => {
   it('throws on truncated input', () => {
     expect(() => parseNcp(buildNcp({ length: 100 }))).toThrowError(NcpParseError);
   });
+  it('resolves unknown monochrome filter/toning codes to "unknown" with warnings (no throw)', () => {
+    const adj = new Uint8Array(26);
+    adj[0] = 0x06;  // base = Monochrome
+    adj[4] = 0x82;  // sharpening -> 2
+    adj[9] = 0x99;  // monochrome filter -> unknown code
+    adj[10] = 0x99; // toning type -> unknown code
+    adj[11] = 0x82; // toning strength -> 2
+    const r = parseNcp(buildNcp({ adjustments: adj }));
+    expect(r.basePictureControl.name).toBe('Monochrome');
+    expect(r.monochromeFilter?.name).toBe('unknown');
+    expect(r.toningType?.name).toBe('unknown');
+    expect(r.supported).toBe(false);
+    expect(r.warnings.length).toBeGreaterThan(0);
+  });
 });

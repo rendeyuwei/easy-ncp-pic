@@ -77,6 +77,9 @@ describe('golden: PICCON33.NCP', () => {
     expect(r.toningType?.code).toBe(f.toning);
     expect(r.toningStrength).toBe(f.toningStrength);
     expect(r.supported).toBe(true);
+    expect(r.warnings).toHaveLength(0);
+    expect(r.monochromeFilter?.name).not.toBe('unknown');
+    expect(r.toningType?.name).not.toBe('unknown');
   });
   it('parses the curve control points', () => {
     const r = parseNcp(bytes);

@@ -31,5 +31,6 @@ describe('readLut257', () => {
       caught = e as NcpParseError;
     }
     expect(caught?.code).toBe('LUT_OUT_OF_RANGE');
+    expect(caught).toBeInstanceOf(NcpParseError);
   });
 });

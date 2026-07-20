@@ -1,1 +1,3 @@
-export const SCHEMA_VERSION = 1;
+export * from './types';
+export * from './errors';
+export { SCHEMA_VERSION } from './constants';

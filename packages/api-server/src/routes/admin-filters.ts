@@ -82,8 +82,24 @@ export function registerAdminFilterRoutes(app: FastifyInstance, ctx: AppContext,
         });
         return reply.code(201).send({ filter });
       } catch (e) {
-        if ((e as { code?: string }).code?.includes('SQLITE_CONSTRAINT')) {
-          throw new ApiError(400, 'VALIDATION_ERROR', 'Invalid category');
+        const err = e as { code?: string; message?: string };
+        if (err.code?.includes('SQLITE_CONSTRAINT')) {
+          // better-sqlite3 names the offending column in the message, e.g.
+          // "UNIQUE constraint failed: filters.ncp_sha256". Discriminate so a genuine
+          // duplicate isn't misreported as a bad category, and a slug collision isn't
+          // reported as 'Invalid category'.
+          const message = err.message ?? '';
+          if (err.code === 'SQLITE_CONSTRAINT_FOREIGNKEY') {
+            // category_id does not reference an existing category.
+            throw new ApiError(400, 'VALIDATION_ERROR', 'Invalid category');
+          }
+          if (message.includes('ncp_sha256')) {
+            // The pre-check passed but a concurrent write inserted the same NCP.
+            throw new ApiError(409, 'DUPLICATE_NCP', 'This Picture Control is already published');
+          }
+          if (message.includes('slug')) {
+            throw new ApiError(409, 'DUPLICATE_NCP', 'A filter with this slug already exists');
+          }
         }
         throw e;
       }

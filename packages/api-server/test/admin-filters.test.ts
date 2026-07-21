@@ -6,7 +6,9 @@ import { buildTestApp, login, type TestApp } from './helpers/build-test-app';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const PICCON02 = join(here, '../../ncp-parser/test/fixtures/PICCON02.NCP');
+const PICCON33 = join(here, '../../ncp-parser/test/fixtures/PICCON33.NCP');
 const ncpBase64 = () => readFileSync(PICCON02).toString('base64');
+const ncpBase64Alt = () => readFileSync(PICCON33).toString('base64');
 
 let t: TestApp | null = null;
 afterEach(async () => {
@@ -62,13 +64,33 @@ describe('POST /api/admin/filters (NCP upload)', () => {
     expect(second.json().code).toBe('DUPLICATE_NCP');
   });
 
-  it('rejects an invalid category with 400', async () => {
+  it('rejects an invalid category (FK violation) with 400 VALIDATION_ERROR', async () => {
     const { app, cookie, csrf } = await authedWithCategory();
     const res = await app.app.inject({
       method: 'POST', url: '/api/admin/filters', headers: { cookie, ...csrf },
       payload: { ncpBase64: ncpBase64(), displayName: 'X', categoryId: 'missing-cat' },
     });
     expect(res.statusCode).toBe(400);
+    expect(res.json().code).toBe('VALIDATION_ERROR');
+  });
+
+  it('maps a slug UNIQUE collision to a 4xx (not 500), not to Invalid category', async () => {
+    const { app, cookie, csrf, categoryId } = await authedWithCategory();
+    // Two distinct NCPs (different sha256) forced to the same slug.
+    const first = await app.app.inject({
+      method: 'POST', url: '/api/admin/filters', headers: { cookie, ...csrf },
+      payload: { ncpBase64: ncpBase64(), displayName: 'Fuji Astia', categoryId, slug: 'shared-slug' },
+    });
+    expect(first.statusCode).toBe(201);
+    const second = await app.app.inject({
+      method: 'POST', url: '/api/admin/filters', headers: { cookie, ...csrf },
+      payload: { ncpBase64: ncpBase64Alt(), displayName: 'Mono', categoryId, slug: 'shared-slug' },
+    });
+    // Must be a client error (4xx), specifically a duplicate, and NOT mislabeled as 'Invalid category'.
+    expect(second.statusCode).toBeGreaterThanOrEqual(400);
+    expect(second.statusCode).toBeLessThan(500);
+    expect(second.json().code).toBe('DUPLICATE_NCP');
+    expect(second.json().message).not.toBe('Invalid category');
   });
 
   it('enforces the 64 KiB body limit (413)', async () => {

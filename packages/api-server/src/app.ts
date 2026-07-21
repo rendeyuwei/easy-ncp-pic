@@ -9,6 +9,7 @@ import { ApiError, registerErrorHandler } from './errors';
 import { registerHealthRoutes } from './routes/health';
 import { createAuthHooks } from './auth/hooks';
 import { registerAdminAuthRoutes } from './routes/admin-auth';
+import { registerAdminCategoryRoutes } from './routes/admin-categories';
 
 export interface AppContext {
   config: AppConfig;
@@ -31,6 +32,7 @@ export async function buildApp(ctx: AppContext): Promise<FastifyInstance> {
   registerHealthRoutes(app, ctx);
   const hooks = createAuthHooks(ctx);
   registerAdminAuthRoutes(app, ctx, hooks);
+  registerAdminCategoryRoutes(app, ctx, hooks);
 
   return app;
 }

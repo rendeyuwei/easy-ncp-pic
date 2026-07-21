@@ -11,6 +11,7 @@ import { createAuthHooks } from './auth/hooks';
 import { registerAdminAuthRoutes } from './routes/admin-auth';
 import { registerAdminCategoryRoutes } from './routes/admin-categories';
 import { registerAdminFilterRoutes } from './routes/admin-filters';
+import { registerPublicFilterRoutes } from './routes/public-filters';
 
 export interface AppContext {
   config: AppConfig;
@@ -35,6 +36,7 @@ export async function buildApp(ctx: AppContext): Promise<FastifyInstance> {
   registerAdminAuthRoutes(app, ctx, hooks);
   registerAdminCategoryRoutes(app, ctx, hooks);
   registerAdminFilterRoutes(app, ctx, hooks);
+  registerPublicFilterRoutes(app, ctx);
 
   return app;
 }

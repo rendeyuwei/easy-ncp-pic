@@ -95,3 +95,39 @@ describe('POST /api/admin/filters (NCP upload)', () => {
     expect(res.json().filters).toHaveLength(1);
   });
 });
+
+describe('PATCH/DELETE /api/admin/filters', () => {
+  it('edits a filter (display name, enabled) and bumps updated_at', async () => {
+    const { app, cookie, csrf, categoryId } = await authedWithCategory();
+    const created = await app.app.inject({ method: 'POST', url: '/api/admin/filters', headers: { cookie, ...csrf }, payload: { ncpBase64: ncpBase64(), displayName: 'Before', categoryId } });
+    const id = created.json().filter.id as string;
+    const patched = await app.app.inject({ method: 'PATCH', url: `/api/admin/filters/${id}`, headers: { cookie, ...csrf }, payload: { displayName: 'After', isEnabled: false } });
+    expect(patched.statusCode).toBe(200);
+    expect(patched.json().filter.displayName).toBe('After');
+    expect(patched.json().filter.isEnabled).toBe(false);
+  });
+
+  it('returns 404 when editing a missing filter', async () => {
+    const { app, cookie, csrf } = await authedWithCategory();
+    const res = await app.app.inject({ method: 'PATCH', url: '/api/admin/filters/nope', headers: { cookie, ...csrf }, payload: { displayName: 'x' } });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('deletes a filter (204) and then 404s on a second delete', async () => {
+    const { app, cookie, csrf, categoryId } = await authedWithCategory();
+    const created = await app.app.inject({ method: 'POST', url: '/api/admin/filters', headers: { cookie, ...csrf }, payload: { ncpBase64: ncpBase64(), displayName: 'F', categoryId } });
+    const id = created.json().filter.id as string;
+    const del = await app.app.inject({ method: 'DELETE', url: `/api/admin/filters/${id}`, headers: { cookie, ...csrf } });
+    expect(del.statusCode).toBe(204);
+    const again = await app.app.inject({ method: 'DELETE', url: `/api/admin/filters/${id}`, headers: { cookie, ...csrf } });
+    expect(again.statusCode).toBe(404);
+  });
+
+  it('requires CSRF to delete (403 without token)', async () => {
+    const { app, cookie, csrf, categoryId } = await authedWithCategory();
+    const created = await app.app.inject({ method: 'POST', url: '/api/admin/filters', headers: { cookie, ...csrf }, payload: { ncpBase64: ncpBase64(), displayName: 'F', categoryId } });
+    const id = created.json().filter.id as string;
+    const res = await app.app.inject({ method: 'DELETE', url: `/api/admin/filters/${id}`, headers: { cookie } });
+    expect(res.statusCode).toBe(403);
+  });
+});

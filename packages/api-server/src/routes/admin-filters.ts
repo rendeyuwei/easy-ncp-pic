@@ -89,4 +89,39 @@ export function registerAdminFilterRoutes(app: FastifyInstance, ctx: AppContext,
       }
     },
   );
+
+  app.patch(
+    '/api/admin/filters/:id',
+    {
+      preHandler: [hooks.requireAuth, hooks.requireCsrf],
+      schema: {
+        body: {
+          type: 'object',
+          properties: {
+            displayName: { type: 'string' },
+            description: { type: 'string' },
+            categoryId: { type: 'string' },
+            slug: { type: 'string' },
+            sortOrder: { type: 'integer' },
+            isEnabled: { type: 'boolean' },
+          },
+          additionalProperties: false,
+        },
+      },
+    },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const b = req.body as { displayName?: string; description?: string; categoryId?: string; slug?: string; sortOrder?: number; isEnabled?: boolean };
+      const filter = filters.update(id, b);
+      if (!filter) throw new ApiError(404, 'NOT_FOUND', 'Filter not found');
+      return { filter };
+    },
+  );
+
+  app.delete('/api/admin/filters/:id', { preHandler: [hooks.requireAuth, hooks.requireCsrf] }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const deleted = filters.delete(id);
+    if (!deleted) throw new ApiError(404, 'NOT_FOUND', 'Filter not found');
+    return reply.code(204).send();
+  });
 }

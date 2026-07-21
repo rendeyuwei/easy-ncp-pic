@@ -98,7 +98,7 @@ describe('FilterRepository', () => {
     expect(updated?.displayName).toBe('After');
     expect(updated?.isEnabled).toBe(false);
     expect(updated?.sortOrder).toBe(3);
-    expect(updated!.updatedAt >= f.updatedAt).toBe(true);
+    expect(updated!.updatedAt > f.updatedAt).toBe(true);
     expect(filters.update('nope', { displayName: 'x' })).toBeNull();
   });
 

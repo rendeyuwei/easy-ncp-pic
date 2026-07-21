@@ -20,6 +20,7 @@ export interface NewSession {
   adminId: string;
   tokenHash: string;
   csrfSecret: string;
+  /** Canonical UTC ISO-8601 timestamp (ending in 'Z'); deleteExpired compares it lexicographically, so non-UTC/offset-bearing strings would miscompare. */
   expiresAt: string;
 }
 
@@ -53,6 +54,7 @@ export class AdminSessionRepository {
     return row ? map(row as Record<string, unknown>) : null;
   }
 
+  /** `nowIso` (if supplied) must be canonical UTC ISO-8601 ('...Z'). */
   touch(id: string, nowIso?: string): AdminSessionRecord | null {
     if (!this.findById(id)) return null;
     const value = nowIso ?? new Date().toISOString();
@@ -60,6 +62,7 @@ export class AdminSessionRepository {
     return this.findById(id);
   }
 
+  /** `nowIso` (if supplied) must be canonical UTC ISO-8601 ('...Z'); stored `expires_at` values are compared lexicographically. */
   deleteExpired(nowIso?: string): number {
     const value = nowIso ?? new Date().toISOString();
     return this.db.prepare(`DELETE FROM admin_sessions WHERE expires_at < ?`).run(value).changes;

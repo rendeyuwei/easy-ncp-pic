@@ -37,7 +37,7 @@ describe('AdminRepository', () => {
     await new Promise((r) => setTimeout(r, 5));
     const updated = admins.updatePassword(a.id, 'new');
     expect(updated?.passwordHash).toBe('new');
-    expect(updated!.passwordChangedAt >= a.passwordChangedAt).toBe(true);
+    expect(updated!.passwordChangedAt > a.passwordChangedAt).toBe(true);
     expect(admins.updatePassword('nope', 'x')).toBeNull();
   });
 });

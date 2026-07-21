@@ -5,8 +5,10 @@ import rateLimit from '@fastify/rate-limit';
 import type { AppConfig } from './config';
 import type { AppDb } from './db';
 import type { SessionService } from './auth/session';
-import { registerErrorHandler } from './errors';
+import { ApiError, registerErrorHandler } from './errors';
 import { registerHealthRoutes } from './routes/health';
+import { createAuthHooks } from './auth/hooks';
+import { registerAdminAuthRoutes } from './routes/admin-auth';
 
 export interface AppContext {
   config: AppConfig;
@@ -21,14 +23,14 @@ export async function buildApp(ctx: AppContext): Promise<FastifyInstance> {
   await app.register(cookie);
   await app.register(rateLimit, {
     global: false,
-    errorResponseBuilder: (_req, context) => ({
-      code: 'RATE_LIMITED',
-      message: `Too many requests, retry in ${context.after}`,
-    }),
+    errorResponseBuilder: (_req, context) =>
+      new ApiError(429, 'RATE_LIMITED', `Too many requests, retry in ${context.after}`),
   });
 
   registerErrorHandler(app);
   registerHealthRoutes(app, ctx);
+  const hooks = createAuthHooks(ctx);
+  registerAdminAuthRoutes(app, ctx, hooks);
 
   return app;
 }

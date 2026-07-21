@@ -1,0 +1,29 @@
+{
+  "name": "@easypic/database",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "SQLite schema, migrations, transactions, and storage interfaces for EasyPic.",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "files": ["dist"],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "migrate": "node ./dist/bin/migrate.js"
+  },
+  "engines": { "node": ">=20.19.0 <21 || >=22.12.0" },
+  "dependencies": {
+    "better-sqlite3": "^11.7.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "tsup": "^8.3.5",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

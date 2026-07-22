@@ -4,7 +4,8 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { parseNcp } from '@easypic/ncp-parser';
 import { process } from '../src/pipeline';
-import { fromParsedPictureControl } from '../src/params';
+import { fromParsedPictureControl, type FilterParams } from '../src/params';
+import { CurveLut } from '../src/curve';
 import { createPixelBuffer } from '../src/pixel';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -53,6 +54,25 @@ describe('pipeline.process', () => {
       expect(out.data[i]).toBeGreaterThanOrEqual(0);
       expect(out.data[i]).toBeLessThanOrEqual(1);
     }
+  });
+
+  it('monochrome without toning collapses to R==G==B == Rec.709 luminance (pins the mono stage)', () => {
+    const monoNoToning: FilterParams = {
+      schemaVersion: 1,
+      baseMode: 'monochrome',
+      curveEnabled: false,
+      curve: CurveLut.identity(),
+      saturation: 0,
+      hue: 0,
+      sharpening: 0, // disable sharpen so the grayscale stays exact
+      monoFilter: { code: 0x80, weights: [0.2126, 0.7152, 0.0722] },
+      toning: null,
+    };
+    const out = process(onePixel(0.8, 0.4, 0.2), monoNoToning, 1);
+    const luma = 0.2126 * 0.8 + 0.7152 * 0.4 + 0.0722 * 0.2;
+    expect(out.data[0]).toBeCloseTo(out.data[1], 5);
+    expect(out.data[1]).toBeCloseTo(out.data[2], 5);
+    expect(out.data[0]).toBeCloseTo(luma, 5);
   });
 
   it('does not mutate the input buffer', () => {

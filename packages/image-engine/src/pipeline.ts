@@ -1,5 +1,5 @@
 import type { PixelBuffer } from './pixel';
-import { clonePixelBuffer, createPixelBuffer } from './pixel';
+import { clonePixelBuffer } from './pixel';
 import type { FilterParams } from './params';
 import { clamp01, REC709 } from './color';
 import { applySaturation, applyHue } from './adjust';

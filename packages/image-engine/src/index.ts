@@ -4,3 +4,4 @@ export * from './color';
 export * from './mono';
 export * from './adjust';
 export * from './sharpen';
+export * from './blend';

@@ -7,3 +7,4 @@ export * from './sharpen';
 export * from './blend';
 export * from './params';
 export * from './pipeline';
+export * from './sizing';

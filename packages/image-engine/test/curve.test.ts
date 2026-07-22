@@ -24,6 +24,8 @@ describe('CurveLut', () => {
     // At v=0.25 (index 64), y = 0.5; at v=0.125 (index 32), y = 0.25.
     expect(lut.apply(0.25)).toBeCloseTo(0.5, 5);
     expect(lut.apply(0.125)).toBeCloseTo(0.25, 5);
+    // Mid-segment (index 64.5, frac 0.5): blend of lut[64]=0.5 and lut[65]=130/256.
+    expect(lut.apply(0.25 + 0.5 / 256)).toBeCloseTo((0.5 + 130 / 256) / 2, 5);
   });
 
   it('clamps out-of-range input to [0,1]', () => {

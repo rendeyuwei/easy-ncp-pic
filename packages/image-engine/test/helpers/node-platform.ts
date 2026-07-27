@@ -29,6 +29,10 @@ export async function nodeEncode(
   const id = ctx.createImageData(width, height);
   id.data.set(rgba);
   ctx.putImageData(id, 0, 0);
-  const buf = type === 'image/jpeg' ? canvas.toBuffer('image/jpeg', { quality }) : canvas.toBuffer('image/png');
+  // Separate branches so each @napi-rs/canvas toBuffer overload resolves independently;
+  // the jpeg/webp overload takes a plain `quality?: number`, not a config object.
+  const buf = type === 'image/jpeg'
+    ? canvas.toBuffer('image/jpeg', quality)
+    : canvas.toBuffer('image/png');
   return new Uint8Array(buf);
 }

@@ -9,3 +9,4 @@ export * from './params';
 export * from './pipeline';
 export * from './sizing';
 export * from './exif';
+export * from './orientation';

@@ -12,3 +12,4 @@ export * from './exif';
 export * from './orientation';
 export * from './scale';
 export * from './render-canvas';
+export * from './platform';

@@ -13,3 +13,4 @@ export * from './orientation';
 export * from './scale';
 export * from './render-canvas';
 export * from './platform';
+export * from './codec';

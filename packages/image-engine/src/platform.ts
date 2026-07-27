@@ -16,8 +16,10 @@ export interface Platform {
 }
 
 /**
- * Browser implementation. Decodes to RAW pixels (EXIF orientation is applied
- * explicitly by the engine), so behavior matches the Node test platform.
+ * Browser implementation. Decodes to EXIF-ORIENTED pixels: the browser auto-orients
+ * at createImageBitmap decode (spec §10.1), and the engine trusts that output and does
+ * NOT re-apply orientation (which would double-rotate). The Node test platform simulates
+ * this by applying the parsed EXIF orientation inside nodeDecode.
  * NOTE: only runs in a browser (uses DOM APIs); verified by browser e2e tests.
  */
 export const browserPlatform: Platform = {

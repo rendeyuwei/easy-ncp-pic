@@ -22,14 +22,12 @@ export interface Platform {
  */
 export const browserPlatform: Platform = {
   async decode(bytes: Uint8Array): Promise<DecodedImage> {
+    // Browsers apply EXIF orientation automatically at decode (spec §10.1: browser-managed
+    // sRGB pixels with EXIF orientation corrected). The engine trusts this oriented output
+    // and does NOT re-apply orientation (that would double-rotate). The Node test platform
+    // simulates this by applying the parsed EXIF orientation inside nodeDecode.
     const blob = new Blob([bytes as Uint8Array<ArrayBuffer>]);
-    let bitmap: ImageBitmap;
-    try {
-      // Request raw pixels so the engine's explicit orientation handling is correct.
-      bitmap = await createImageBitmap(blob, { imageOrientation: 'none' as ImageOrientation });
-    } catch {
-      bitmap = await createImageBitmap(blob);
-    }
+    const bitmap = await createImageBitmap(blob);
     const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
     const ctx = canvas.getContext('2d') as OffscreenCanvasRenderingContext2D;
     ctx.drawImage(bitmap, 0, 0);

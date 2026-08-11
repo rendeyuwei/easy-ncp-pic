@@ -189,3 +189,12 @@ export function createWorkerEngine(worker: WorkerLike, options: WorkerEngineOpti
     },
   };
 }
+
+export function createBrowserWorkerEngine(options: WorkerEngineOptions = {}): WorkerEngine {
+  if (typeof Worker === 'undefined') throw new Error('Web Workers are unavailable');
+  const worker = new Worker(new URL('./worker-runtime.js', import.meta.url), {
+    type: 'module',
+    name: 'easypic-image-engine',
+  });
+  return createWorkerEngine(worker as unknown as WorkerLike, options);
+}

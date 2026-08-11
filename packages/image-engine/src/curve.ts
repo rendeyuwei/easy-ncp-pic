@@ -25,4 +25,9 @@ export class CurveLut {
     const frac = x - i;
     return this.values[i] * (1 - frac) + this.values[i + 1] * frac;
   }
+
+  /** Return a defensive copy suitable for GPU upload or structured-clone serialization. */
+  toFloat32Array(): Float32Array {
+    return this.values.slice();
+  }
 }

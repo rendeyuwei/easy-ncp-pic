@@ -37,4 +37,12 @@ describe('CurveLut', () => {
   it('throws if the input is not 257 entries', () => {
     expect(() => CurveLut.from([0, 1])).toThrow();
   });
+
+  it('returns a defensive Float32Array copy for GPU and worker transport', () => {
+    const lut = CurveLut.identity();
+    const values = lut.toFloat32Array();
+    expect(values).toHaveLength(257);
+    values[128] = 0;
+    expect(lut.apply(0.5)).toBeCloseTo(0.5, 6);
+  });
 });

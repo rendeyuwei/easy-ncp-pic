@@ -6,6 +6,7 @@ import { parseNcp } from '@easypic/ncp-parser';
 import { createEngine, type Engine } from '../src/engine';
 import type { Platform } from '../src/platform';
 import { fromParsedPictureControl } from '../src/params';
+import type { ImageRenderer } from '../src/renderer';
 import { nodeDecode, nodeEncode } from './helpers/node-platform';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -90,5 +91,24 @@ describe('engine', () => {
     const after = await nodeDecode(out);
     const differs = Array.from(after.data).some((v, i) => Math.abs(v - before.data[i]) > 2);
     expect(differs).toBe(true);
+  });
+
+  it('uses an injected renderer for preview output', async () => {
+    const redRenderer: ImageRenderer = {
+      kind: 'webgl',
+      render(image) {
+        const data = new Uint8ClampedArray(image.width * image.height * 4);
+        for (let i = 0; i < data.length; i += 4) data.set([255, 0, 0, 255], i);
+        return { width: image.width, height: image.height, data };
+      },
+    };
+    const injected = createEngine(nodePlatform, redRenderer);
+    const loaded = await injected.load(await makeTestImage(4, 2, 'image/png'));
+
+    const preview = injected.renderPreview(loaded, astia, 1, 2);
+
+    expect(preview.width).toBe(2);
+    expect(preview.height).toBe(1);
+    expect(Array.from(preview.data)).toEqual([1, 0, 0, 1, 1, 0, 0, 1]);
   });
 });

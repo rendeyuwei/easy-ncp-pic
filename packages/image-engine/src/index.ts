@@ -18,6 +18,7 @@ export * from './webgl-shaders';
 export * from './render-webgl';
 export * from './worker-protocol';
 export * from './worker-server';
+export * from './worker-client';
 export * from './platform';
 export * from './codec';
 export * from './engine';

@@ -13,6 +13,7 @@ export * from './orientation';
 export * from './scale';
 export * from './render-canvas';
 export * from './renderer';
+export * from './webgl-params';
 export * from './platform';
 export * from './codec';
 export * from './engine';

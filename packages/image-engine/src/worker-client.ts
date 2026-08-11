@@ -13,7 +13,9 @@ import {
 export interface WorkerLike {
   postMessage(message: WorkerRequest, transfer?: Transferable[]): void;
   addEventListener(type: 'message', listener: (event: MessageEvent<WorkerInboundMessage>) => void): void;
+  addEventListener(type: 'error', listener: (event: ErrorEvent) => void): void;
   removeEventListener(type: 'message', listener: (event: MessageEvent<WorkerInboundMessage>) => void): void;
+  removeEventListener(type: 'error', listener: (event: ErrorEvent) => void): void;
   terminate(): void;
 }
 
@@ -107,7 +109,19 @@ export function createWorkerEngine(worker: WorkerLike, options: WorkerEngineOpti
     request.resolve(message.result);
   };
 
+  const onError = (event: ErrorEvent): void => {
+    event.preventDefault();
+    const error = new Error(event.message || 'Worker runtime error');
+    for (const request of pending.values()) request.reject(error);
+    pending.clear();
+    disposed = true;
+    worker.removeEventListener('message', onMessage);
+    worker.removeEventListener('error', onError);
+    worker.terminate();
+  };
+
   worker.addEventListener('message', onMessage);
+  worker.addEventListener('error', onError);
 
   function send<T>(
     createRequest: (id: number) => WorkerRequest,
@@ -183,6 +197,7 @@ export function createWorkerEngine(worker: WorkerLike, options: WorkerEngineOpti
       if (disposed) return;
       disposed = true;
       worker.removeEventListener('message', onMessage);
+      worker.removeEventListener('error', onError);
       for (const request of pending.values()) request.reject(new Error('Worker engine is disposed'));
       pending.clear();
       worker.terminate();

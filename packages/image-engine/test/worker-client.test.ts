@@ -20,17 +20,30 @@ class FakeWorker implements WorkerLike {
   readonly posted: Array<{ message: WorkerRequest; transfer: Transferable[] }> = [];
   terminateCount = 0;
   private readonly listeners = new Set<(event: MessageEvent<WorkerInboundMessage>) => void>();
+  private readonly errorListeners = new Set<(event: ErrorEvent) => void>();
 
   postMessage(message: WorkerRequest, transfer: Transferable[] = []): void {
     this.posted.push({ message, transfer });
   }
 
-  addEventListener(type: 'message', listener: (event: MessageEvent<WorkerInboundMessage>) => void): void {
-    if (type === 'message') this.listeners.add(listener);
+  addEventListener(type: 'message', listener: (event: MessageEvent<WorkerInboundMessage>) => void): void;
+  addEventListener(type: 'error', listener: (event: ErrorEvent) => void): void;
+  addEventListener(
+    type: 'message' | 'error',
+    listener: ((event: MessageEvent<WorkerInboundMessage>) => void) | ((event: ErrorEvent) => void),
+  ): void {
+    if (type === 'message') this.listeners.add(listener as (event: MessageEvent<WorkerInboundMessage>) => void);
+    else this.errorListeners.add(listener as (event: ErrorEvent) => void);
   }
 
-  removeEventListener(type: 'message', listener: (event: MessageEvent<WorkerInboundMessage>) => void): void {
-    if (type === 'message') this.listeners.delete(listener);
+  removeEventListener(type: 'message', listener: (event: MessageEvent<WorkerInboundMessage>) => void): void;
+  removeEventListener(type: 'error', listener: (event: ErrorEvent) => void): void;
+  removeEventListener(
+    type: 'message' | 'error',
+    listener: ((event: MessageEvent<WorkerInboundMessage>) => void) | ((event: ErrorEvent) => void),
+  ): void {
+    if (type === 'message') this.listeners.delete(listener as (event: MessageEvent<WorkerInboundMessage>) => void);
+    else this.errorListeners.delete(listener as (event: ErrorEvent) => void);
   }
 
   terminate(): void {
@@ -40,6 +53,11 @@ class FakeWorker implements WorkerLike {
   emit(message: WorkerInboundMessage): void {
     const event = { data: message } as MessageEvent<WorkerInboundMessage>;
     for (const listener of this.listeners) listener(event);
+  }
+
+  emitError(message: string): void {
+    const event = { message, preventDefault() {} } as ErrorEvent;
+    for (const listener of this.errorListeners) listener(event);
   }
 }
 
@@ -122,5 +140,16 @@ describe('worker engine client', () => {
     engine.dispose();
     await expect(pending).rejects.toThrow('Worker engine is disposed');
     expect(worker.terminateCount).toBe(1);
+  });
+
+  it('rejects pending work with the native Worker error instead of hanging', async () => {
+    const worker = new FakeWorker();
+    const engine = createWorkerEngine(worker);
+    const pending = engine.load(new Uint8Array([1, 2, 3]));
+
+    worker.emitError('worker runtime crashed');
+    engine.dispose();
+
+    await expect(pending).rejects.toThrow('worker runtime crashed');
   });
 });

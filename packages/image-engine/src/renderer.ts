@@ -21,6 +21,22 @@ export function createFallbackRenderer(
 ): ImageRenderer {
   let active = primary;
   let reported = false;
+  let disposed = false;
+  let primaryDisposed = false;
+  let fallbackDisposed = false;
+
+  function disposePrimary(): void {
+    if (primaryDisposed) return;
+    primaryDisposed = true;
+    primary.dispose?.();
+  }
+
+  function disposeFallback(): void {
+    if (fallbackDisposed) return;
+    fallbackDisposed = true;
+    fallback.dispose?.();
+  }
+
   return {
     get kind() {
       return active.kind;
@@ -30,7 +46,7 @@ export function createFallbackRenderer(
         return active.render(image, params, intensity);
       } catch (error) {
         if (active === fallback) throw error;
-        active.dispose?.();
+        disposePrimary();
         active = fallback;
         if (!reported) {
           reported = true;
@@ -40,8 +56,10 @@ export function createFallbackRenderer(
       }
     },
     dispose() {
-      primary.dispose?.();
-      if (fallback !== primary) fallback.dispose?.();
+      if (disposed) return;
+      disposed = true;
+      disposePrimary();
+      if (fallback !== primary) disposeFallback();
     },
   };
 }

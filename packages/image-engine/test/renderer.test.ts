@@ -62,4 +62,32 @@ describe('renderer boundary', () => {
     expect(errors).toHaveLength(1);
     expect(errors[0]).toEqual(new Error('context lost'));
   });
+
+  it('disposes each renderer at most once after fallback', () => {
+    let primaryDisposals = 0;
+    let fallbackDisposals = 0;
+    const primary: ImageRenderer = {
+      kind: 'webgl',
+      render() {
+        throw new Error('context lost');
+      },
+      dispose() {
+        primaryDisposals++;
+      },
+    };
+    const fallback: ImageRenderer = {
+      ...solidRenderer('canvas', [0, 0, 0, 255]),
+      dispose() {
+        fallbackDisposals++;
+      },
+    };
+    const renderer = createFallbackRenderer(primary, fallback);
+
+    renderer.render(input, identityParams);
+    renderer.dispose?.();
+    renderer.dispose?.();
+
+    expect(primaryDisposals).toBe(1);
+    expect(fallbackDisposals).toBe(1);
+  });
 });

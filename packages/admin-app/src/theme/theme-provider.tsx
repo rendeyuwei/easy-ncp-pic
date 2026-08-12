@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type PropsWithChildren } from 'react';
+import { createContext, useCallback, useContext, useLayoutEffect, useMemo, useState, type PropsWithChildren } from 'react';
 
 export type Theme = 'dark' | 'light';
 
@@ -19,7 +19,7 @@ function initialTheme(): Theme {
 export function ThemeProvider({ children }: PropsWithChildren) {
   const [theme, setTheme] = useState<Theme>(initialTheme);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     document.documentElement.dataset.theme = theme;
   }, [theme]);
 

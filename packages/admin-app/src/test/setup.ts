@@ -29,6 +29,8 @@ if (typeof window.matchMedia === 'undefined') {
     }) as MediaQueryList;
 }
 
+window.scrollTo = vi.fn();
+
 beforeAll(() => {
   server.listen({ onUnhandledRequest: 'error' });
 });

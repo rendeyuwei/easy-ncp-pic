@@ -126,7 +126,7 @@ The administration UI requires conflicts to remain recoverable, so the affected 
 - Category create/update maps a duplicate slug to `409 SLUG_CONFLICT`.
 - Filter create/update maps a duplicate slug to `409 SLUG_CONFLICT`; duplicate NCP bytes continue to use `409 DUPLICATE_NCP`.
 - Filter create/update maps a missing category reference to `400 VALIDATION_ERROR` with a `categoryId` field error.
-- Category names and filter display names are trimmed and must contain `1..100` characters. Descriptions are trimmed and limited to `500` characters. A supplied slug is trimmed, limited to `60` characters, and must match lowercase ASCII segments separated by single hyphens (`[a-z0-9]+(?:-[a-z0-9]+)*`). A blank slug is omitted so the repository derives one. Sort order must be an integer.
+- Category names and filter display names are trimmed and must contain `1..100` characters. Descriptions are trimmed and limited to `500` characters. A supplied slug is trimmed, limited to `60` characters, and must match lowercase ASCII segments separated by single hyphens (`[a-z0-9]+(?:-[a-z0-9]+)*`). On create, a blank slug is omitted so the repository derives one. Edit forms start with the current slug; if an update includes `slug`, it must be nonempty and valid. Changing a name never silently changes an existing slug. Sort order must be an integer.
 - The Fastify request schemas enforce these bounds, create routes enforce their required fields, and patch routes require at least one editable field. The browser mirrors the same rules for immediate feedback, but the server remains authoritative.
 
 This is limited to constraints exercised by the administration forms and does not introduce a general persistence abstraction.

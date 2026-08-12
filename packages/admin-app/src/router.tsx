@@ -10,6 +10,7 @@ import { AppBoundary } from './components/app-boundary';
 import { AdminShell } from './components/admin-shell';
 import { LoginPage } from './components/login-page';
 import { PageState } from './components/ui/status';
+import { CategoryPage } from './features/categories/category-page';
 import { useSession } from './session/session-provider';
 
 function RootLayout() {
@@ -33,10 +34,6 @@ function FilterRoutePlaceholder() {
   return <section className="admin-page"><header className="page-heading"><div><p className="eyebrow">内容管理</p><h1>滤镜</h1></div></header></section>;
 }
 
-function CategoryRoutePlaceholder() {
-  return <section className="admin-page"><header className="page-heading"><div><p className="eyebrow">内容管理</p><h1>分类</h1></div></header></section>;
-}
-
 function NotFoundRedirect() {
   const { status } = useSession();
   if (status === 'loading' || status === 'transitioning') return <PageState kind="loading" />;
@@ -52,7 +49,7 @@ const indexRoute = createRoute({ getParentRoute: () => rootRoute, path: '/', com
 const loginRoute = createRoute({ getParentRoute: () => rootRoute, path: '/login', component: LoginPage });
 const protectedRoute = createRoute({ getParentRoute: () => rootRoute, id: '_protected', component: ProtectedLayout });
 const filtersRoute = createRoute({ getParentRoute: () => protectedRoute, path: '/filters', component: FilterRoutePlaceholder });
-const categoriesRoute = createRoute({ getParentRoute: () => protectedRoute, path: '/categories', component: CategoryRoutePlaceholder });
+const categoriesRoute = createRoute({ getParentRoute: () => protectedRoute, path: '/categories', component: CategoryPage });
 
 const routeTree = rootRoute.addChildren([
   indexRoute,

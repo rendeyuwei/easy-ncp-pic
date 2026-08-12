@@ -8,6 +8,7 @@ export type SessionStatus = 'loading' | 'authenticated' | 'anonymous' | 'transit
 interface SessionContextValue {
   status: SessionStatus;
   bootstrapError: string | null;
+  expiryNotice: string | null;
   api: AdminApi;
   retryBootstrap(): Promise<void>;
   login(input: Credentials): Promise<void>;
@@ -24,20 +25,28 @@ interface SessionProviderProps extends PropsWithChildren {
 export function SessionProvider({ api, queryClient, children }: SessionProviderProps) {
   const [status, setStatus] = useState<SessionStatus>('loading');
   const [bootstrapError, setBootstrapError] = useState<string | null>(null);
+  const [expiryNotice, setExpiryNotice] = useState<string | null>(null);
   const mounted = useRef(false);
   const generation = useRef(0);
   const authTransition = useRef(0);
+  const hasAuthenticatedSession = useRef(false);
 
   const isCurrent = useCallback((operationGeneration: number) => (
     mounted.current && generation.current === operationGeneration
   ), []);
 
-  const becomeAnonymous = useCallback((operationGeneration: number, operationQueryClient: QueryClient) => {
+  const becomeAnonymous = useCallback((
+    operationGeneration: number,
+    operationQueryClient: QueryClient,
+    expired = false,
+  ) => {
     if (!isCurrent(operationGeneration)) return false;
     authTransition.current += 1;
+    hasAuthenticatedSession.current = false;
     operationQueryClient.removeQueries({ queryKey: queryKeys.root });
     setStatus('anonymous');
     setBootstrapError(null);
+    setExpiryNotice(expired ? '登录状态已过期，请重新登录。' : null);
     return true;
   }, [isCurrent]);
 
@@ -54,12 +63,14 @@ export function SessionProvider({ api, queryClient, children }: SessionProviderP
     try {
       await operationApi.restoreSession();
       if (isCurrent(operationGeneration) && authTransition.current === operationAuthTransition) {
+        hasAuthenticatedSession.current = true;
         setStatus('authenticated');
+        setExpiryNotice(null);
       }
     } catch (error) {
       if (!isCurrent(operationGeneration) || authTransition.current !== operationAuthTransition) return;
       if (error instanceof ApiFailure && error.status === 401) {
-        becomeAnonymous(operationGeneration, operationQueryClient);
+        becomeAnonymous(operationGeneration, operationQueryClient, false);
         return;
       }
       setStatus('loading');
@@ -71,7 +82,11 @@ export function SessionProvider({ api, queryClient, children }: SessionProviderP
     const effectGeneration = generation.current + 1;
     generation.current = effectGeneration;
     mounted.current = true;
-    api.setUnauthorizedHandler(() => { becomeAnonymous(effectGeneration, queryClient); });
+    hasAuthenticatedSession.current = false;
+    setExpiryNotice(null);
+    api.setUnauthorizedHandler(() => {
+      becomeAnonymous(effectGeneration, queryClient, hasAuthenticatedSession.current);
+    });
     void bootstrap(effectGeneration, api, queryClient);
 
     return () => {
@@ -91,11 +106,14 @@ export function SessionProvider({ api, queryClient, children }: SessionProviderP
     const previous = status === 'transitioning' ? 'anonymous' : status;
     if (!isCurrent(operationGeneration)) return;
     setStatus('transitioning');
+    setExpiryNotice(null);
     try {
       await api.login(input);
       if (isCurrent(operationGeneration) && authTransition.current === operationAuthTransition) {
+        hasAuthenticatedSession.current = true;
         setStatus('authenticated');
         setBootstrapError(null);
+        setExpiryNotice(null);
       }
     } catch (error) {
       if (isCurrent(operationGeneration) && authTransition.current === operationAuthTransition) setStatus(previous);
@@ -111,14 +129,24 @@ export function SessionProvider({ api, queryClient, children }: SessionProviderP
     setStatus('transitioning');
     try {
       await api.logout();
-      becomeAnonymous(operationGeneration, queryClient);
+      if (isCurrent(operationGeneration) && authTransition.current !== operationAuthTransition) return;
+      becomeAnonymous(operationGeneration, queryClient, false);
     } catch (error) {
+      if (isCurrent(operationGeneration) && authTransition.current !== operationAuthTransition) return;
       if (isCurrent(operationGeneration) && authTransition.current === operationAuthTransition) setStatus(previous);
       throw error;
     }
   }, [api, becomeAnonymous, isCurrent, queryClient, status]);
 
-  const value = useMemo<SessionContextValue>(() => ({ status, bootstrapError, api, retryBootstrap, login, logout }), [api, bootstrapError, login, logout, retryBootstrap, status]);
+  const value = useMemo<SessionContextValue>(() => ({
+    status,
+    bootstrapError,
+    expiryNotice,
+    api,
+    retryBootstrap,
+    login,
+    logout,
+  }), [api, bootstrapError, expiryNotice, login, logout, retryBootstrap, status]);
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
 }
 

@@ -6,7 +6,7 @@ import { Button } from './ui/button';
 import { Field } from './ui/field';
 
 export function LoginPage() {
-  const { status, login } = useSession();
+  const { status, expiryNotice, login } = useSession();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -35,6 +35,9 @@ export function LoginPage() {
         <p className="eyebrow">EasyPic Admin</p>
         <h1 id="login-title">管理后台登录</h1>
         <p className="login-card__intro">登录后管理滤镜与分类。</p>
+        {expiryNotice ? (
+          <p className="login-card__notice" role="status" aria-label="会话状态">{expiryNotice}</p>
+        ) : null}
         <form className="login-form" onSubmit={(event) => void handleSubmit(event)}>
           <Field label="用户名">
             <input

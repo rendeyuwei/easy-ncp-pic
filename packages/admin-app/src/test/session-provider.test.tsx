@@ -47,6 +47,7 @@ function SessionProbe() {
     <>
       <output>{session.status}</output>
       {session.bootstrapError ? <p>{session.bootstrapError}</p> : null}
+      {session.expiryNotice ? <p role="status" aria-label="会话状态">{session.expiryNotice}</p> : null}
       <button onClick={() => void session.login(credentials)}>login</button>
       <button onClick={() => void session.logout()}>logout</button>
       <button onClick={() => void session.retryBootstrap()}>retry</button>
@@ -79,11 +80,18 @@ describe('SessionProvider', () => {
     expect(restoreSession).toHaveBeenCalledTimes(1);
   });
 
-  it('becomes anonymous when restoration rejects with ApiFailure 401', async () => {
-    renderSession(createApi({ restoreSession: async () => { throw new ApiFailure(401, 'UNAUTHORIZED', 'Sign in'); } }).api);
+  it('becomes anonymous without an expiry notice when initial restoration reports unauthorized', async () => {
+    const fake = createApi();
+    fake.api.restoreSession = async () => {
+      fake.unauthorized();
+      throw new ApiFailure(401, 'UNAUTHORIZED', 'Sign in');
+    };
+    renderSession(fake.api);
 
     await waitFor(() => expect(screen.getByText('anonymous')).toBeInTheDocument());
     expect(current.bootstrapError).toBeNull();
+    expect(current.expiryNotice).toBeNull();
+    expect(screen.queryByRole('status', { name: '会话状态' })).not.toBeInTheDocument();
   });
 
   it('keeps a retryable restoration failure loading until retry succeeds', async () => {
@@ -171,7 +179,7 @@ describe('SessionProvider', () => {
     expect(queryClient.getQueryData(['admin', 'filters'])).toEqual(['cached-filter']);
   });
 
-  it('handles the client unauthorized callback by clearing cache and becoming anonymous', async () => {
+  it('handles a post-bootstrap unauthorized callback with cache clearing and an expiry notice', async () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     preloadProtectedQueries(queryClient);
     const fake = createApi();
@@ -181,10 +189,11 @@ describe('SessionProvider', () => {
     await act(async () => { fake.unauthorized(); });
 
     expect(screen.getByText('anonymous')).toBeInTheDocument();
+    expect(screen.getByRole('status', { name: '会话状态' })).toHaveTextContent('登录状态已过期，请重新登录');
     expectProtectedQueriesRemoved(queryClient);
   });
 
-  it('does not roll back an unauthorized callback when logout then rejects', async () => {
+  it('lets an unauthorized logout callback win without rethrowing the terminal failure', async () => {
     const logout = deferred<void>();
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     preloadProtectedQueries(queryClient);
@@ -198,10 +207,32 @@ describe('SessionProvider', () => {
     let logoutPromise!: Promise<void>;
     act(() => { logoutPromise = current.logout(); });
     logout.reject(new ApiFailure(401, 'UNAUTHORIZED', 'Sign in'));
-    await expect(act(async () => { await logoutPromise; })).rejects.toMatchObject({ status: 401 });
+    await act(async () => { await expect(logoutPromise).resolves.toBeUndefined(); });
 
     expect(screen.getByText('anonymous')).toBeInTheDocument();
+    expect(screen.getByRole('status', { name: '会话状态' })).toHaveTextContent('登录状态已过期，请重新登录');
     expectProtectedQueriesRemoved(queryClient);
+  });
+
+  it('clears the expiry notice for a new login flow and reports a later expiry', async () => {
+    const login = deferred<void>();
+    const fake = createApi({ login: () => login.promise });
+    renderSession(fake.api);
+    await waitFor(() => expect(screen.getByText('authenticated')).toBeInTheDocument());
+    await act(async () => { fake.unauthorized(); });
+
+    let loginPromise!: Promise<void>;
+    act(() => { loginPromise = current.login(credentials); });
+
+    expect(screen.getByText('transitioning')).toBeInTheDocument();
+    expect(screen.queryByRole('status', { name: '会话状态' })).not.toBeInTheDocument();
+    login.resolve(undefined);
+    await act(async () => { await loginPromise; });
+    expect(screen.getByText('authenticated')).toBeInTheDocument();
+
+    await act(async () => { fake.unauthorized(); });
+    expect(screen.getByText('anonymous')).toBeInTheDocument();
+    expect(screen.getByRole('status', { name: '会话状态' })).toHaveTextContent('登录状态已过期，请重新登录');
   });
 
   it('makes a stale unauthorized callback inert after api and query client replacement', async () => {

@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
@@ -45,12 +45,22 @@ function anonymousApi(overrides: Partial<AdminApi> = {}): AdminApi {
   });
 }
 
+function controllableApi(overrides: Partial<AdminApi> = {}) {
+  let unauthorizedHandler: () => void = () => undefined;
+  const api = createApi({
+    setUnauthorizedHandler: vi.fn((handler: () => void) => { unauthorizedHandler = handler; }),
+    ...overrides,
+  });
+  return { api, unauthorized: () => unauthorizedHandler() };
+}
+
 describe('admin application routing', () => {
   it('redirects /admin to login for an anonymous session', async () => {
     const { history } = renderAdminApp(anonymousApi(), '/admin');
 
     expect(await screen.findByRole('heading', { name: '管理后台登录' })).toBeInTheDocument();
     expect(history.location.pathname).toBe('/admin/login');
+    expect(screen.queryByRole('status', { name: '会话状态' })).not.toBeInTheDocument();
   });
 
   it('redirects /admin to filters for an authenticated session', async () => {
@@ -161,6 +171,40 @@ describe('admin application routing', () => {
     expect(await screen.findByRole('heading', { name: '分类' })).toBeInTheDocument();
     expect(screen.getByRole('alert')).toHaveTextContent('退出登录失败，请重试');
     expect(screen.getByRole('alert')).not.toHaveTextContent('server detail');
+  });
+
+  it('redirects an expired authenticated session with a status notice and cleared cache', async () => {
+    const fake = controllableApi();
+    const { history, queryClient } = renderAdminApp(fake.api, '/admin/categories');
+    await screen.findByRole('heading', { name: '分类' });
+    queryClient.setQueryData(['admin', 'categories'], ['cached-category']);
+    queryClient.setQueryData(['admin', 'filters'], ['cached-filter']);
+
+    await act(async () => { fake.unauthorized(); });
+
+    expect(await screen.findByRole('heading', { name: '管理后台登录' })).toBeInTheDocument();
+    expect(history.location.pathname).toBe('/admin/login');
+    expect(screen.getByRole('status', { name: '会话状态' })).toHaveTextContent('登录状态已过期，请重新登录');
+    expect(queryClient.getQueryData(['admin', 'categories'])).toBeUndefined();
+    expect(queryClient.getQueryData(['admin', 'filters'])).toBeUndefined();
+  });
+
+  it('shows only the expiry notice when logout reports unauthorized before rejecting', async () => {
+    let unauthorizedHandler: () => void = () => undefined;
+    const api = createApi({
+      setUnauthorizedHandler: vi.fn((handler: () => void) => { unauthorizedHandler = handler; }),
+      logout: vi.fn(async () => {
+        unauthorizedHandler();
+        throw new ApiFailure(401, 'UNAUTHORIZED', 'Sign in');
+      }),
+    });
+    const { user } = renderAdminApp(api, '/admin/filters');
+
+    await user.click(await screen.findByRole('button', { name: '退出登录' }));
+
+    expect(await screen.findByRole('heading', { name: '管理后台登录' })).toBeInTheDocument();
+    expect(screen.getByRole('status', { name: '会话状态' })).toHaveTextContent('登录状态已过期，请重新登录');
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
   it('returns to login after logout succeeds', async () => {

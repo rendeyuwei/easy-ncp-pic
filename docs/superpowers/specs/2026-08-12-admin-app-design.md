@@ -107,13 +107,13 @@ The session provider has four explicit states: `loading`, `authenticated`, `anon
 3. A `401` enters `anonymous`; it is an expected bootstrap result, not a global error toast.
 4. Other bootstrap failures show a retryable connection state rather than pretending the user is logged out.
 5. Login calls `POST /api/admin/session`, stores the returned token only in memory, and navigates to `/admin/filters`.
-6. Logout calls `DELETE /api/admin/session` with the CSRF header. On success, clear the token and navigate to login.
+6. Logout calls `DELETE /api/admin/session` with the CSRF header. On success, clear the token, remove protected administration query data from memory, and navigate to login.
 
 Passwords and CSRF tokens are never written to local storage, session storage, URLs, logs, or query caches. The session cookie remains `HttpOnly`, `SameSite=Lax`, and secure according to deployment configuration.
 
 ### 5.3 Authentication failures
 
-- Any API `401` after bootstrap clears local session state and navigates to login. An unobtrusive message explains that the session expired.
+- Any API `401` after bootstrap clears local session state and protected administration query data, then navigates to login. An unobtrusive message explains that the session expired.
 - On a protected mutation, including logout, `403 CSRF_INVALID` makes the API layer perform one session-restoration request and retry the mutation once with the restored token. A second failure clears the local session and requires login.
 - The retry is limited to one attempt. Login and the restoration request itself never enter this path.
 - The API client prevents concurrent restoration requests from creating a request stampede; callers share one in-flight restoration promise.

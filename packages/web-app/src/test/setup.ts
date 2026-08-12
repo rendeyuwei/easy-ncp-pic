@@ -20,6 +20,14 @@ if (typeof PointerEvent === 'undefined') {
   globalThis.PointerEvent = MouseEvent as typeof PointerEvent;
 }
 
+if (typeof URL.createObjectURL === 'undefined') {
+  URL.createObjectURL = () => 'blob:test';
+}
+
+if (typeof URL.revokeObjectURL === 'undefined') {
+  URL.revokeObjectURL = () => undefined;
+}
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();

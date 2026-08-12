@@ -18,6 +18,7 @@ describe('POST /api/admin/session (login)', () => {
     expect(setCookie).toContain('sid=');
     expect(setCookie.toLowerCase()).toContain('httponly');
     expect(setCookie.toLowerCase()).toContain('samesite=lax');
+    expect(res.headers['cache-control']).toBe('no-store');
   });
 
   it('rejects wrong password with 401 INVALID_CREDENTIALS and no cookie', async () => {
@@ -50,6 +51,52 @@ describe('POST /api/admin/session (login)', () => {
     const res = await t.app.inject({ method: 'POST', url: '/api/admin/session', payload: { username: 'admin', password: 'bad' } });
     expect(res.statusCode).toBe(429);
     expect(res.json().code).toBe('RATE_LIMITED');
+  });
+});
+
+describe('GET /api/admin/session (restoration)', () => {
+  it('restores the csrf token without rotating the session', async () => {
+    t = await buildTestApp();
+    const loginResult = await login(t.app);
+    const row = t.db.db.prepare('SELECT id FROM admin_sessions').get() as { id: string };
+    t.db.db.prepare('UPDATE admin_sessions SET last_seen_at = ? WHERE id = ?')
+      .run('2000-01-01T00:00:00.000Z', row.id);
+
+    const res = await t.app.inject({
+      method: 'GET', url: '/api/admin/session', headers: { cookie: loginResult.cookie },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ csrfToken: loginResult.csrfToken });
+    expect(res.headers['set-cookie']).toBeUndefined();
+    expect(res.headers['cache-control']).toBe('no-store');
+    expect((t.db.db.prepare('SELECT COUNT(*) AS n FROM admin_sessions').get() as { n: number }).n).toBe(1);
+    expect(t.db.repos.sessions.findById(row.id)!.lastSeenAt).not.toBe('2000-01-01T00:00:00.000Z');
+  });
+
+  it('requires authentication when no cookie is provided', async () => {
+    t = await buildTestApp();
+    const res = await t.app.inject({ method: 'GET', url: '/api/admin/session' });
+    expect(res.statusCode).toBe(401);
+    expect(res.json().code).toBe('UNAUTHORIZED');
+  });
+
+  it('rejects a directly expired session', async () => {
+    t = await buildTestApp();
+    const loginResult = await login(t.app);
+    t.db.db.prepare('UPDATE admin_sessions SET expires_at = ?').run('2000-01-01T00:00:00.000Z');
+    const res = await t.app.inject({ method: 'GET', url: '/api/admin/session', headers: { cookie: loginResult.cookie } });
+    expect(res.statusCode).toBe(401);
+    expect(res.json().code).toBe('UNAUTHORIZED');
+  });
+
+  it('rejects a deleted or revoked session', async () => {
+    t = await buildTestApp();
+    const loginResult = await login(t.app);
+    t.db.db.prepare('DELETE FROM admin_sessions').run();
+    const res = await t.app.inject({ method: 'GET', url: '/api/admin/session', headers: { cookie: loginResult.cookie } });
+    expect(res.statusCode).toBe(401);
+    expect(res.json().code).toBe('UNAUTHORIZED');
   });
 });
 

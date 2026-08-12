@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { AppContext } from '../app';
 import type { AuthHooks } from '../auth/hooks';
 import { ApiError } from '../errors';
+import { mapAdminConstraint, normalizeAdminBody, SLUG_PATTERN } from './admin-input';
 
 export function registerAdminCategoryRoutes(app: FastifyInstance, ctx: AppContext, hooks: AuthHooks): void {
   const cats = ctx.db.repos.categories;
@@ -14,18 +15,30 @@ export function registerAdminCategoryRoutes(app: FastifyInstance, ctx: AppContex
     '/api/admin/categories',
     {
       preHandler: [hooks.requireAuth, hooks.requireCsrf],
+      preValidation: normalizeAdminBody('category-create'),
       schema: {
         body: {
           type: 'object',
           required: ['name'],
-          properties: { name: { type: 'string' }, slug: { type: 'string' }, sortOrder: { type: 'integer' }, isEnabled: { type: 'boolean' } },
+          properties: {
+            name: { type: 'string', minLength: 1, maxLength: 100 },
+            slug: { type: 'string', minLength: 1, maxLength: 60, pattern: SLUG_PATTERN },
+            sortOrder: { type: 'integer' }, isEnabled: { type: 'boolean' },
+          },
           additionalProperties: false,
         },
       },
     },
     async (req, reply) => {
       const b = req.body as { name: string; slug?: string; sortOrder?: number; isEnabled?: boolean };
-      const category = cats.create({ name: b.name, slug: b.slug, sortOrder: b.sortOrder, isEnabled: b.isEnabled });
+      let category;
+      try {
+        category = cats.create({ name: b.name, slug: b.slug, sortOrder: b.sortOrder, isEnabled: b.isEnabled });
+      } catch (e) {
+        const mapped = mapAdminConstraint(e);
+        if (mapped) throw mapped;
+        throw e;
+      }
       return reply.code(201).send({ category });
     },
   );
@@ -34,10 +47,16 @@ export function registerAdminCategoryRoutes(app: FastifyInstance, ctx: AppContex
     '/api/admin/categories/:id',
     {
       preHandler: [hooks.requireAuth, hooks.requireCsrf],
+      preValidation: normalizeAdminBody('category-patch'),
       schema: {
         body: {
           type: 'object',
-          properties: { name: { type: 'string' }, slug: { type: 'string' }, sortOrder: { type: 'integer' }, isEnabled: { type: 'boolean' } },
+          minProperties: 1,
+          properties: {
+            name: { type: 'string', minLength: 1, maxLength: 100 },
+            slug: { type: 'string', minLength: 1, maxLength: 60, pattern: SLUG_PATTERN },
+            sortOrder: { type: 'integer' }, isEnabled: { type: 'boolean' },
+          },
           additionalProperties: false,
         },
       },
@@ -45,7 +64,14 @@ export function registerAdminCategoryRoutes(app: FastifyInstance, ctx: AppContex
     async (req, reply) => {
       const { id } = req.params as { id: string };
       const b = req.body as { name?: string; slug?: string; sortOrder?: number; isEnabled?: boolean };
-      const category = cats.update(id, b);
+      let category;
+      try {
+        category = cats.update(id, b);
+      } catch (e) {
+        const mapped = mapAdminConstraint(e);
+        if (mapped) throw mapped;
+        throw e;
+      }
       if (!category) throw new ApiError(404, 'NOT_FOUND', 'Category not found');
       return { category };
     },

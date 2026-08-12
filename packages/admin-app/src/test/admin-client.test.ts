@@ -107,6 +107,23 @@ describe('AdminApiClient request contract', () => {
       url: '/api/admin/session',
       init: { method: 'GET', credentials: 'same-origin' },
     });
+
+    fetchMock.mockResolvedValueOnce(jsonResponse({ csrfToken: 'newer-token' }));
+    await expect(client.restoreSession()).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('allows session restoration to retry after a rejected restoration settles', async () => {
+    const fetchMock = vi.fn<typeof fetch>();
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ code: 'INTERNAL', message: 'Retry later' }, 500))
+      .mockResolvedValueOnce(jsonResponse({ csrfToken: 'restored-token' }));
+    const client = new AdminApiClient(fetchMock);
+
+    await expectFailure(client.restoreSession(), 500, 'INTERNAL');
+    await expect(client.restoreSession()).resolves.toBeUndefined();
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it('restores once after CSRF_INVALID and replays with the new token', async () => {
@@ -288,6 +305,14 @@ describe('AdminApiClient response handling and wrappers', () => {
     const client = new AdminApiClient(fetchMock);
 
     await expectFailure(client.listCategories(), 200, 'INVALID_RESPONSE');
+  });
+
+  it('translates an unexpected 204 from a JSON endpoint to INVALID_RESPONSE', async () => {
+    const fetchMock = vi.fn<typeof fetch>();
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
+    const client = new AdminApiClient(fetchMock);
+
+    await expectFailure(client.listCategories(), 204, 'INVALID_RESPONSE');
   });
 
   it('translates a rejected fetch to NETWORK_ERROR', async () => {

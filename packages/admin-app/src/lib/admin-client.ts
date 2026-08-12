@@ -52,10 +52,6 @@ export interface AdminApi {
 type FieldError = NonNullable<ApiErrorBody['errors']>[number];
 type Parser<T> = (value: unknown) => T;
 
-function expectNoContent(): never {
-  throw new Error('Expected an empty response');
-}
-
 export class ApiFailure extends Error {
   readonly status: number;
   readonly code: string;
@@ -100,7 +96,7 @@ export class AdminApiClient implements AdminApi {
   }
 
   async logout(): Promise<void> {
-    await this.mutate('/api/admin/session', { method: 'DELETE' }, expectNoContent);
+    await this.mutate<void>('/api/admin/session', { method: 'DELETE' }, null);
     this.csrfToken = null;
   }
 
@@ -127,7 +123,7 @@ export class AdminApiClient implements AdminApi {
     return this.mutate(
       `/api/admin/categories/${encodeURIComponent(id)}`,
       { method: 'DELETE' },
-      expectNoContent,
+      null,
     );
   }
 
@@ -154,7 +150,7 @@ export class AdminApiClient implements AdminApi {
     return this.mutate(
       `/api/admin/filters/${encodeURIComponent(id)}`,
       { method: 'DELETE' },
-      expectNoContent,
+      null,
     );
   }
 
@@ -180,7 +176,7 @@ export class AdminApiClient implements AdminApi {
     return this.parseSuccess(response, parse);
   }
 
-  private async mutate<T>(path: string, init: RequestInit, parse: Parser<T>, retry = true): Promise<T> {
+  private async mutate<T>(path: string, init: RequestInit, parse: Parser<T> | null, retry = true): Promise<T> {
     const headers = new Headers(init.headers);
     headers.set('x-csrf-token', this.requireCsrf());
     const response = await this.send(path, { ...init, headers });
@@ -197,6 +193,7 @@ export class AdminApiClient implements AdminApi {
       throw failure;
     }
 
+    if (parse === null) return this.parseNoContent(response) as T;
     return this.parseSuccess(response, parse);
   }
 
@@ -225,11 +222,15 @@ export class AdminApiClient implements AdminApi {
   }
 
   private async parseSuccess<T>(response: Response, parse: Parser<T>): Promise<T> {
-    if (response.status === 204) return undefined as T;
-
     try {
       return parse(await response.json());
     } catch {
+      throw new ApiFailure(response.status, 'INVALID_RESPONSE', 'The server returned an invalid response');
+    }
+  }
+
+  private parseNoContent(response: Response): void {
+    if (response.status !== 204) {
       throw new ApiFailure(response.status, 'INVALID_RESPONSE', 'The server returned an invalid response');
     }
   }

@@ -96,6 +96,33 @@ describe('category page states', () => {
     expect(await screen.findByRole('heading', { name: '无法加载分类' })).toBeInTheDocument();
     expect(attempts).toBe(1);
   });
+
+  it('retries a network rejection once before showing the list error state', async () => {
+    let attempts = 0;
+    server.use(http.get('/api/admin/categories', () => {
+      attempts += 1;
+      return HttpResponse.error();
+    }));
+    renderCategories();
+
+    expect(await screen.findByRole('heading', { name: '无法加载分类' })).toBeInTheDocument();
+    expect(attempts).toBe(2);
+  });
+
+  it('retries a malformed successful response once before showing the list error state', async () => {
+    let attempts = 0;
+    server.use(http.get('/api/admin/categories', () => {
+      attempts += 1;
+      return HttpResponse.text('{malformed', {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }));
+    renderCategories();
+
+    expect(await screen.findByRole('heading', { name: '无法加载分类' })).toBeInTheDocument();
+    expect(attempts).toBe(2);
+  });
 });
 
 describe('category form mutations', () => {

@@ -37,6 +37,13 @@ export class NcpInspectionError extends Error {
 }
 
 export async function inspectNcpFile(file: File): Promise<NcpInspection> {
+  if (file.size === 0) {
+    throw new NcpInspectionError('EMPTY_FILE', '请选择一个非空的 NCP 文件。');
+  }
+  if (file.size > MAX_NCP_FILE_BYTES) {
+    throw new NcpInspectionError('FILE_TOO_LARGE', 'NCP 文件不能超过 64 KiB。');
+  }
+
   const bytes = new Uint8Array(await file.arrayBuffer());
   if (bytes.length === 0) {
     throw new NcpInspectionError('EMPTY_FILE', '请选择一个非空的 NCP 文件。');

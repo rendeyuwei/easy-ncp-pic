@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createElement } from 'react';
 import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   MAX_NCP_FILE_BYTES,
   NcpInspectionError,
@@ -83,6 +83,19 @@ describe('inspectNcpFile', () => {
       fixtureFile(new Uint8Array(MAX_NCP_FILE_BYTES + 1), 'large.NCP'),
       'FILE_TOO_LARGE',
     );
+  });
+
+  it.each([
+    [0, 'EMPTY_FILE'],
+    [MAX_NCP_FILE_BYTES + 1, 'FILE_TOO_LARGE'],
+  ] as const)('rejects a %i-byte file without reading its bytes', async (size, code) => {
+    const arrayBuffer = vi.fn(async () => {
+      throw new Error('arrayBuffer must not be called');
+    });
+    const file = { name: 'guarded.NCP', size, arrayBuffer } as unknown as File;
+
+    await expectInspectionError(file, code);
+    expect(arrayBuffer).not.toHaveBeenCalled();
   });
 
   it('maps a wrong binary signature to an invalid-NCP error', async () => {

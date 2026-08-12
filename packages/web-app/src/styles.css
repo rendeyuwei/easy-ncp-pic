@@ -364,8 +364,8 @@ input:focus-visible,
 }
 
 .photo-compare {
+  flex: none;
   width: min(100%, 1080px);
-  max-height: calc(100dvh - 290px);
   margin: auto;
 }
 
@@ -844,6 +844,10 @@ input:focus-visible,
 
   .preview-panel {
     padding: 26px 28px 32px;
+  }
+
+  .photo-compare {
+    width: min(100%, 1080px, calc((100dvh - 290px) * var(--photo-aspect)));
   }
 
   .filter-rail {

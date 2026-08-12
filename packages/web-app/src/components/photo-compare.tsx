@@ -1,4 +1,11 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
+import {
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent,
+  type PointerEvent,
+} from 'react';
 import type { PixelBuffer } from '@easypic/image-engine';
 import { drawPixelBuffer } from '../lib/pixels';
 
@@ -46,7 +53,10 @@ export function PhotoCompare({ original, filtered, showOriginal }: PhotoCompareP
   return (
     <figure
       className="photo-compare"
-      style={{ aspectRatio: `${original.width} / ${original.height}` }}
+      style={{
+        aspectRatio: `${original.width} / ${original.height}`,
+        '--photo-aspect': original.width / original.height,
+      } as CSSProperties}
       aria-label="照片滤镜预览"
     >
       <div

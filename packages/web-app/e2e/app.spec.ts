@@ -130,7 +130,9 @@ test.describe('EasyPic local editor', () => {
     const filters = page.locator('.filter-rail');
     const previewBox = await preview.boundingBox();
     const filtersBox = await filters.boundingBox();
-    if (!previewBox || !filtersBox) throw new Error('Editor regions have no bounds');
+    const photoBox = await page.locator('.photo-compare').boundingBox();
+    if (!previewBox || !filtersBox || !photoBox) throw new Error('Editor regions have no bounds');
+    expect(Math.abs(photoBox.width / photoBox.height - 64 / 48)).toBeLessThan(0.01);
     if (testInfo.project.name === 'desktop') {
       expect(filtersBox.x).toBeGreaterThan(previewBox.x + previewBox.width - 2);
     } else {

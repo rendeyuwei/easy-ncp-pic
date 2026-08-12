@@ -84,12 +84,13 @@ export function useImageSession(
 ): ImageSessionState {
   const [fallbackNotice, setFallbackNotice] = useState<string | null>(null);
   const engineRef = useRef<WorkerEngine | null>(null);
+  const engineFactoryRef = useRef(engineFactory);
   const getEngine = useCallback((): WorkerEngine => {
-    if (!engineRef.current) engineRef.current = engineFactory({
+    if (!engineRef.current) engineRef.current = engineFactoryRef.current({
       onFallback: () => setFallbackNotice('WebGL 不可用，已切换到兼容模式，处理速度可能较慢。'),
     });
     return engineRef.current;
-  }, [engineFactory]);
+  }, []);
   const imageRef = useRef<WorkerLoadedImage | null>(null);
   const selectedRef = useRef<PublicFilter | null>(null);
   const intensityRef = useRef(1);
@@ -153,6 +154,11 @@ export function useImageSession(
     setThumbnails(next);
     setThumbnailLoading(new Set());
   }, [filters, getEngine]);
+
+  useEffect(() => {
+    const active = imageRef.current;
+    if (active && filters.length > 0) void generateThumbnails(active);
+  }, [filters, generateThumbnails]);
 
   const reset = useCallback(async (): Promise<void> => {
     renderToken.current++;

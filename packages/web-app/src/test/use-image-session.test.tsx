@@ -104,6 +104,24 @@ describe('useImageSession', () => {
     expect(result.current.filteredPreview).toEqual(newer);
   });
 
+  it('generates thumbnails when filters arrive after the photo loads', async () => {
+    const engine = fakeEngine();
+    const filters = parsePublicFilters(publicFiltersFixture).categories[0].filters;
+    const { result, rerender } = renderHook(
+      ({ available }) => useImageSession(available, () => engine),
+      { initialProps: { available: [] as typeof filters } },
+    );
+    await act(() => result.current.load(
+      new File([new Uint8Array([1])], 'early.png', { type: 'image/png' }),
+    ));
+    expect(engine.renderThumbnail).not.toHaveBeenCalled();
+
+    rerender({ available: filters });
+
+    await waitFor(() => expect(result.current.thumbnails.has(filters[0].id)).toBe(true));
+    expect(engine.renderThumbnail).toHaveBeenCalledOnce();
+  });
+
   it('clamps intensity and preserves editor state when export rejects', async () => {
     const engine = fakeEngine({ exportImage: vi.fn().mockRejectedValue(new Error('out of memory')) });
     const filters = parsePublicFilters(publicFiltersFixture).categories[0].filters;

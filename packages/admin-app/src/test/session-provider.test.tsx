@@ -193,6 +193,25 @@ describe('SessionProvider', () => {
     expectProtectedQueriesRemoved(queryClient);
   });
 
+  it('preserves one expiry notice when concurrent requests report unauthorized', async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    preloadProtectedQueries(queryClient);
+    const fake = createApi();
+    renderSession(fake.api, queryClient);
+    await waitFor(() => expect(screen.getByText('authenticated')).toBeInTheDocument());
+
+    await act(async () => {
+      fake.unauthorized();
+      fake.unauthorized();
+    });
+
+    expect(screen.getByText('anonymous')).toBeInTheDocument();
+    const notices = screen.getAllByRole('status', { name: '会话状态' });
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toHaveTextContent('登录状态已过期，请重新登录');
+    expectProtectedQueriesRemoved(queryClient);
+  });
+
   it('lets an unauthorized logout callback win without rethrowing the terminal failure', async () => {
     const logout = deferred<void>();
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });

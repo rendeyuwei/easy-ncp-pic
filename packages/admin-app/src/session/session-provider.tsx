@@ -85,7 +85,8 @@ export function SessionProvider({ api, queryClient, children }: SessionProviderP
     hasAuthenticatedSession.current = false;
     setExpiryNotice(null);
     api.setUnauthorizedHandler(() => {
-      becomeAnonymous(effectGeneration, queryClient, hasAuthenticatedSession.current);
+      if (!hasAuthenticatedSession.current) return;
+      becomeAnonymous(effectGeneration, queryClient, true);
     });
     void bootstrap(effectGeneration, api, queryClient);
 

@@ -28,6 +28,14 @@ if (typeof URL.revokeObjectURL === 'undefined') {
   URL.revokeObjectURL = () => undefined;
 }
 
+if (typeof ResizeObserver === 'undefined') {
+  globalThis.ResizeObserver = class ResizeObserver {
+    observe(): void {}
+    unobserve(): void {}
+    disconnect(): void {}
+  };
+}
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();

@@ -1,7 +1,7 @@
 # EasyPic Admin App Design
 
-**Date:** 2026-08-12  
-**Status:** Approved for implementation planning  
+**Date:** 2026-08-12
+**Status:** Approved for implementation planning
 **Parent specification:** `docs/superpowers/specs/2026-07-14-easy-pic-design.md`
 
 ## 1. Goal

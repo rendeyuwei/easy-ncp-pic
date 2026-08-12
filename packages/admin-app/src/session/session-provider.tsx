@@ -24,72 +24,99 @@ interface SessionProviderProps extends PropsWithChildren {
 export function SessionProvider({ api, queryClient, children }: SessionProviderProps) {
   const [status, setStatus] = useState<SessionStatus>('loading');
   const [bootstrapError, setBootstrapError] = useState<string | null>(null);
-  const active = useRef(true);
+  const mounted = useRef(false);
+  const generation = useRef(0);
+  const authTransition = useRef(0);
 
-  const becomeAnonymous = useCallback(() => {
-    queryClient.removeQueries({ queryKey: queryKeys.root });
-    if (active.current) {
-      setStatus('anonymous');
-      setBootstrapError(null);
-    }
-  }, [queryClient]);
+  const isCurrent = useCallback((operationGeneration: number) => (
+    mounted.current && generation.current === operationGeneration
+  ), []);
 
-  const retryBootstrap = useCallback(async () => {
-    if (active.current) {
-      setStatus('loading');
-      setBootstrapError(null);
-    }
+  const becomeAnonymous = useCallback((operationGeneration: number, operationQueryClient: QueryClient) => {
+    if (!isCurrent(operationGeneration)) return false;
+    authTransition.current += 1;
+    operationQueryClient.removeQueries({ queryKey: queryKeys.root });
+    setStatus('anonymous');
+    setBootstrapError(null);
+    return true;
+  }, [isCurrent]);
+
+  const bootstrap = useCallback(async (
+    operationGeneration: number,
+    operationApi: AdminApi,
+    operationQueryClient: QueryClient,
+  ) => {
+    if (!isCurrent(operationGeneration)) return;
+    const operationAuthTransition = authTransition.current;
+    setStatus('loading');
+    setBootstrapError(null);
 
     try {
-      await api.restoreSession();
-      if (active.current) setStatus('authenticated');
+      await operationApi.restoreSession();
+      if (isCurrent(operationGeneration) && authTransition.current === operationAuthTransition) {
+        setStatus('authenticated');
+      }
     } catch (error) {
-      if (!active.current) return;
+      if (!isCurrent(operationGeneration) || authTransition.current !== operationAuthTransition) return;
       if (error instanceof ApiFailure && error.status === 401) {
-        becomeAnonymous();
+        becomeAnonymous(operationGeneration, operationQueryClient);
         return;
       }
       setStatus('loading');
       setBootstrapError('无法恢复登录状态，请重试');
     }
-  }, [api, becomeAnonymous]);
+  }, [becomeAnonymous, isCurrent]);
 
   useEffect(() => {
-    active.current = true;
-    api.setUnauthorizedHandler(becomeAnonymous);
-    void retryBootstrap();
+    const effectGeneration = generation.current + 1;
+    generation.current = effectGeneration;
+    mounted.current = true;
+    api.setUnauthorizedHandler(() => { becomeAnonymous(effectGeneration, queryClient); });
+    void bootstrap(effectGeneration, api, queryClient);
+
     return () => {
-      active.current = false;
+      if (generation.current === effectGeneration) generation.current += 1;
+      mounted.current = false;
       api.setUnauthorizedHandler(() => undefined);
     };
-  }, [api, becomeAnonymous, retryBootstrap]);
+  }, [api, bootstrap, becomeAnonymous, queryClient]);
+
+  const retryBootstrap = useCallback(() => (
+    bootstrap(generation.current, api, queryClient)
+  ), [api, bootstrap, queryClient]);
 
   const login = useCallback(async (input: Credentials) => {
+    const operationGeneration = generation.current;
+    const operationAuthTransition = authTransition.current;
     const previous = status === 'transitioning' ? 'anonymous' : status;
+    if (!isCurrent(operationGeneration)) return;
     setStatus('transitioning');
     try {
       await api.login(input);
-      if (active.current) {
+      if (isCurrent(operationGeneration) && authTransition.current === operationAuthTransition) {
         setStatus('authenticated');
         setBootstrapError(null);
       }
     } catch (error) {
-      if (active.current) setStatus(previous);
+      if (isCurrent(operationGeneration) && authTransition.current === operationAuthTransition) setStatus(previous);
       throw error;
     }
-  }, [api, status]);
+  }, [api, isCurrent, status]);
 
   const logout = useCallback(async () => {
+    const operationGeneration = generation.current;
+    const operationAuthTransition = authTransition.current;
     const previous = status === 'transitioning' ? 'authenticated' : status;
+    if (!isCurrent(operationGeneration)) return;
     setStatus('transitioning');
     try {
       await api.logout();
-      becomeAnonymous();
+      becomeAnonymous(operationGeneration, queryClient);
     } catch (error) {
-      if (active.current) setStatus(previous);
+      if (isCurrent(operationGeneration) && authTransition.current === operationAuthTransition) setStatus(previous);
       throw error;
     }
-  }, [api, becomeAnonymous, status]);
+  }, [api, becomeAnonymous, isCurrent, queryClient, status]);
 
   const value = useMemo<SessionContextValue>(() => ({ status, bootstrapError, api, retryBootstrap, login, logout }), [api, bootstrapError, login, logout, retryBootstrap, status]);
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;

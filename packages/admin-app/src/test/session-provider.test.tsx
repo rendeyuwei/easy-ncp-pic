@@ -7,15 +7,17 @@ import { SessionProvider, useSession } from '../session/session-provider';
 
 const credentials: Credentials = { username: 'admin', password: 'secret' };
 
-function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
+function deferred<T>(): { promise: Promise<T>; resolve(value: T): void; reject(reason: unknown): void } {
   let resolve!: (value: T) => void;
-  return { promise: new Promise<T>((next) => { resolve = next; }), resolve };
+  let reject!: (reason: unknown) => void;
+  return { promise: new Promise<T>((next, fail) => { resolve = next; reject = fail; }), resolve, reject };
 }
 
 function createApi(overrides: Partial<AdminApi> = {}) {
   let unauthorizedHandler: () => void = () => undefined;
+  const unauthorizedHandlers: Array<() => void> = [];
   const api: AdminApi = {
-    setUnauthorizedHandler: (handler) => { unauthorizedHandler = handler; },
+    setUnauthorizedHandler: (handler) => { unauthorizedHandler = handler; unauthorizedHandlers.push(handler); },
     restoreSession: async () => undefined,
     login: async () => undefined,
     logout: async () => undefined,
@@ -29,7 +31,11 @@ function createApi(overrides: Partial<AdminApi> = {}) {
     deleteFilter: async () => undefined,
     ...overrides,
   };
-  return { api, unauthorized: () => unauthorizedHandler() };
+  return {
+    api,
+    unauthorized: () => unauthorizedHandler(),
+    unauthorizedAt: (index: number) => unauthorizedHandlers[index](),
+  };
 }
 
 let current: ReturnType<typeof useSession>;
@@ -94,6 +100,13 @@ describe('SessionProvider', () => {
     expect(restoreSession).toHaveBeenCalledTimes(2);
   });
 
+  it('treats only an ApiFailure 401 as anonymous during restoration', async () => {
+    renderSession(createApi({ restoreSession: async () => { throw { status: 401 }; } }).api);
+
+    await waitFor(() => expect(screen.getByText('loading')).toBeInTheDocument());
+    expect(screen.getByText('无法恢复登录状态，请重试')).toBeInTheDocument();
+  });
+
   it('transitions during login and becomes authenticated after login succeeds', async () => {
     const login = deferred<void>();
     renderSession(createApi({ login: () => login.promise }).api);
@@ -132,6 +145,19 @@ describe('SessionProvider', () => {
     expectProtectedQueriesRemoved(queryClient);
   });
 
+  it('stays transitioning while a deferred logout is pending', async () => {
+    const logout = deferred<void>();
+    renderSession(createApi({ logout: () => logout.promise }).api);
+    await waitFor(() => expect(screen.getByText('authenticated')).toBeInTheDocument());
+
+    let logoutPromise!: Promise<void>;
+    act(() => { logoutPromise = current.logout(); });
+
+    expect(screen.getByText('transitioning')).toBeInTheDocument();
+    logout.resolve(undefined);
+    await act(async () => { await logoutPromise; });
+  });
+
   it('keeps authenticated state and cache when logout has a recoverable failure', async () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     preloadProtectedQueries(queryClient);
@@ -156,5 +182,97 @@ describe('SessionProvider', () => {
 
     expect(screen.getByText('anonymous')).toBeInTheDocument();
     expectProtectedQueriesRemoved(queryClient);
+  });
+
+  it('does not roll back an unauthorized callback when logout then rejects', async () => {
+    const logout = deferred<void>();
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    preloadProtectedQueries(queryClient);
+    const fake = createApi({ logout: () => {
+      fake.unauthorized();
+      return logout.promise;
+    } });
+    renderSession(fake.api, queryClient);
+    await waitFor(() => expect(screen.getByText('authenticated')).toBeInTheDocument());
+
+    let logoutPromise!: Promise<void>;
+    act(() => { logoutPromise = current.logout(); });
+    logout.reject(new ApiFailure(401, 'UNAUTHORIZED', 'Sign in'));
+    await expect(act(async () => { await logoutPromise; })).rejects.toMatchObject({ status: 401 });
+
+    expect(screen.getByText('anonymous')).toBeInTheDocument();
+    expectProtectedQueriesRemoved(queryClient);
+  });
+
+  it('makes a stale unauthorized callback inert after api and query client replacement', async () => {
+    const firstRestoration = deferred<void>();
+    const first = createApi({ restoreSession: () => firstRestoration.promise });
+    const second = createApi({ restoreSession: async () => { throw new ApiFailure(401, 'UNAUTHORIZED', 'Sign in'); } });
+    const firstQueryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const secondQueryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    preloadProtectedQueries(firstQueryClient);
+    preloadProtectedQueries(secondQueryClient);
+    const view = render(<SessionProvider api={first.api} queryClient={firstQueryClient}><SessionProbe /></SessionProvider>);
+
+    view.rerender(<SessionProvider api={second.api} queryClient={secondQueryClient}><SessionProbe /></SessionProvider>);
+    await waitFor(() => expect(screen.getByText('anonymous')).toBeInTheDocument());
+    await act(async () => { first.unauthorizedAt(0); });
+
+    expect(screen.getByText('anonymous')).toBeInTheDocument();
+    expect(firstQueryClient.getQueryData(['admin', 'categories'])).toEqual(['cached-category']);
+    expect(firstQueryClient.getQueryData(['admin', 'filters'])).toEqual(['cached-filter']);
+  });
+
+  it('does not let an old bootstrap authenticate a replacement generation', async () => {
+    const firstRestoration = deferred<void>();
+    const first = createApi({ restoreSession: () => firstRestoration.promise });
+    const second = createApi({ restoreSession: async () => { throw new ApiFailure(401, 'UNAUTHORIZED', 'Sign in'); } });
+    const firstQueryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const secondQueryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const view = render(<SessionProvider api={first.api} queryClient={firstQueryClient}><SessionProbe /></SessionProvider>);
+
+    view.rerender(<SessionProvider api={second.api} queryClient={secondQueryClient}><SessionProbe /></SessionProvider>);
+    await waitFor(() => expect(screen.getByText('anonymous')).toBeInTheDocument());
+    firstRestoration.resolve(undefined);
+    await act(async () => { await firstRestoration.promise; });
+
+    expect(screen.getByText('anonymous')).toBeInTheDocument();
+  });
+
+  it('keeps cache intact when deferred bootstrap completes after unmount', async () => {
+    const restoration = deferred<void>();
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    preloadProtectedQueries(queryClient);
+    const fake = createApi();
+    fake.api.restoreSession = async () => {
+      await restoration.promise;
+      fake.unauthorizedAt(0);
+      throw new ApiFailure(401, 'UNAUTHORIZED', 'Sign in');
+    };
+    const view = render(<SessionProvider api={fake.api} queryClient={queryClient}><SessionProbe /></SessionProvider>);
+
+    view.unmount();
+    restoration.resolve(undefined);
+    await act(async () => { await restoration.promise; });
+
+    expect(queryClient.getQueryData(['admin', 'categories'])).toEqual(['cached-category']);
+    expect(queryClient.getQueryData(['admin', 'filters'])).toEqual(['cached-filter']);
+  });
+
+  it('keeps cache intact when deferred logout completes after unmount', async () => {
+    const logout = deferred<void>();
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    preloadProtectedQueries(queryClient);
+    const view = render(<SessionProvider api={createApi({ logout: () => logout.promise }).api} queryClient={queryClient}><SessionProbe /></SessionProvider>);
+    await waitFor(() => expect(screen.getByText('authenticated')).toBeInTheDocument());
+
+    let logoutPromise!: Promise<void>;
+    act(() => { logoutPromise = current.logout(); });
+    view.unmount();
+    logout.resolve(undefined);
+    await act(async () => { await logoutPromise; });
+
+    expect(queryClient.getQueryData(['admin', 'categories'])).toEqual(['cached-category']);
+    expect(queryClient.getQueryData(['admin', 'filters'])).toEqual(['cached-filter']);
   });
 });

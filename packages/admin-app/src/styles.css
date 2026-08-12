@@ -477,6 +477,7 @@ textarea:focus-visible,
 
 .category-form,
 .filter-create-form,
+.filter-edit-form,
 .filter-metadata-fields {
   display: grid;
   gap: 18px;
@@ -548,6 +549,10 @@ textarea:focus-visible,
   display: grid;
   gap: 10px;
   margin: 18px 0 0;
+}
+
+.filter-card .record-actions {
+  margin-top: 18px;
 }
 
 .filter-card dl > div {
@@ -775,6 +780,15 @@ textarea:focus-visible,
 
 .dialog__content.filter-create-dialog {
   width: min(calc(100vw - 32px), 680px);
+}
+
+.dialog__content.filter-edit-dialog {
+  width: min(calc(100vw - 32px), 680px);
+}
+
+.filter-edit-dialog--pending .dialog__close,
+.filter-delete-dialog--pending .dialog__close {
+  visibility: hidden;
 }
 
 .dialog__header {

@@ -1,12 +1,22 @@
-import { useMemo, useState } from 'react';
-import { Plus } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Pencil, Plus, Trash2 } from 'lucide-react';
 import { Button } from '../../components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '../../components/ui/dialog';
 import { PageState, StatusBadge } from '../../components/ui/status';
 import { useNotifications } from '../../components/notification-provider';
+import { ApiFailure } from '../../lib/admin-client';
 import type { AdminFilter } from '../../lib/api-schema';
 import { useCategories } from '../categories/category-queries';
 import { FilterCreateDialog } from './filter-create-dialog';
-import { useCreateFilter, useFilters } from './filter-queries';
+import { FilterEditDialog } from './filter-edit-dialog';
+import { useCreateFilter, useDeleteFilter, useFilters, useUpdateFilter } from './filter-queries';
 
 const dateFormatter = new Intl.DateTimeFormat('zh-CN', {
   dateStyle: 'medium',
@@ -17,12 +27,31 @@ function updatedAt(filter: AdminFilter) {
   return <time dateTime={filter.updatedAt}>{dateFormatter.format(new Date(filter.updatedAt))}</time>;
 }
 
+function FilterActions({ filter, onEdit, onDelete }: {
+  filter: AdminFilter;
+  onEdit(filter: AdminFilter): void;
+  onDelete(filter: AdminFilter): void;
+}) {
+  return (
+    <div className="record-actions">
+      <Button variant="ghost" size="compact" aria-label={`编辑${filter.displayName}`} onClick={() => onEdit(filter)}><Pencil aria-hidden="true" />编辑</Button>
+      <Button variant="danger" size="compact" aria-label={`删除${filter.displayName}`} onClick={() => onDelete(filter)}><Trash2 aria-hidden="true" />删除</Button>
+    </div>
+  );
+}
+
 export function FilterPage() {
   const filters = useFilters();
   const categories = useCategories();
   const create = useCreateFilter();
+  const update = useUpdateFilter();
+  const remove = useDeleteFilter();
   const { notify } = useNotifications();
   const [createOpen, setCreateOpen] = useState(false);
+  const [editing, setEditing] = useState<AdminFilter | null>(null);
+  const [filterToDelete, setFilterToDelete] = useState<AdminFilter | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const deleteContentRef = useRef<HTMLDivElement>(null);
   const createAvailabilityId = 'filter-create-availability';
   const createUnavailable = !categories.isSuccess;
   const createAvailability = categories.isPending
@@ -35,6 +64,27 @@ export function FilterPage() {
     () => new Map((categories.data ?? []).map((category) => [category.id, category.name])),
     [categories.data],
   );
+  const openDelete = (filter: AdminFilter) => {
+    setFilterToDelete(filter);
+    setDeleteError(null);
+  };
+  const deleteFilter = async () => {
+    if (!filterToDelete || remove.isPending) return;
+    setDeleteError(null);
+    try {
+      await remove.mutateAsync(filterToDelete.id);
+      setFilterToDelete(null);
+      notify('滤镜已删除', 'success');
+    } catch (error) {
+      setDeleteError(error instanceof ApiFailure && error.code === 'RATE_LIMITED'
+        ? '请求过于频繁，请稍后重试'
+        : '删除失败，请重试');
+    }
+  };
+  useEffect(() => {
+    const close = deleteContentRef.current?.querySelector<HTMLButtonElement>('.dialog__close');
+    if (close) close.disabled = remove.isPending;
+  }, [remove.isPending]);
 
   let content;
   if (filters.isPending || categories.isPending) {
@@ -61,7 +111,7 @@ export function FilterPage() {
     content = (
       <>
         <table className="data-table filter-table" aria-label="滤镜列表">
-          <thead><tr><th>滤镜</th><th>分类</th><th>状态</th><th>排序</th><th>更新时间</th></tr></thead>
+          <thead><tr><th>滤镜</th><th>分类</th><th>状态</th><th>排序</th><th>更新时间</th><th>操作</th></tr></thead>
           <tbody>{filters.data.map((filter) => (
             <tr key={filter.id}>
               <td><strong>{filter.displayName}</strong><span className="record-secondary">{filter.sourceName}</span></td>
@@ -69,6 +119,7 @@ export function FilterPage() {
               <td><StatusBadge enabled={filter.isEnabled} /></td>
               <td>{filter.sortOrder}</td>
               <td>{updatedAt(filter)}</td>
+              <td><FilterActions filter={filter} onEdit={setEditing} onDelete={openDelete} /></td>
             </tr>
           ))}</tbody>
         </table>
@@ -82,6 +133,7 @@ export function FilterPage() {
               <div><dt>排序</dt><dd>{filter.sortOrder}</dd></div>
               <div><dt>更新时间</dt><dd>{updatedAt(filter)}</dd></div>
             </dl>
+            <FilterActions filter={filter} onEdit={setEditing} onDelete={openDelete} />
           </article>
         ))}</div>
       </>
@@ -114,6 +166,33 @@ export function FilterPage() {
           notify('滤镜已创建', 'success');
         }}
       />
+      <FilterEditDialog
+        open={editing !== null}
+        filter={editing}
+        categories={categories.data ?? []}
+        mutation={update}
+        onOpenChange={(open) => { if (!open) setEditing(null); }}
+        onSuccess={() => {
+          setEditing(null);
+          notify('滤镜已更新', 'success');
+        }}
+      />
+      <Dialog
+        open={filterToDelete !== null}
+        onOpenChange={(open) => { if (!open && !remove.isPending) setFilterToDelete(null); }}
+      >
+        <DialogContent ref={deleteContentRef} className={remove.isPending ? 'filter-delete-dialog--pending' : undefined}>
+          <DialogHeader>
+            <DialogTitle>删除滤镜</DialogTitle>
+            <DialogDescription>确定要删除“{filterToDelete?.displayName}”吗？此操作无法撤销。</DialogDescription>
+          </DialogHeader>
+          {deleteError ? <p className="form-alert confirmation-error" role="alert">{deleteError}</p> : null}
+          <DialogFooter>
+            <Button variant="ghost" disabled={remove.isPending} onClick={() => setFilterToDelete(null)}>取消</Button>
+            <Button variant="danger" disabled={remove.isPending} onClick={() => void deleteFilter()}>删除滤镜</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </section>
   );
 }

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { screen, waitFor, within } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import { HttpResponse, http } from 'msw';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { AdminApiClient } from '../lib/admin-client';
@@ -44,6 +44,7 @@ function renderFilters() {
 
 async function openCreate() {
   const buttons = await screen.findAllByRole('button', { name: '新增滤镜' });
+  await waitFor(() => expect(buttons[0]).toBeEnabled());
   await buttons[0].click();
   return screen.getByRole('dialog', { name: '新增滤镜' });
 }
@@ -103,6 +104,7 @@ describe('filter page states', () => {
 
     const cards = view.container.querySelectorAll('.filter-card');
     expect(cards).toHaveLength(2);
+    expect(cards[0].parentElement).toHaveClass('filter-card-list--stacked');
     expect(cards[0]).toHaveTextContent('柔和 Astia');
     expect(cards[0]).toHaveTextContent('Fuji Astia');
     expect(cards[0]).toHaveTextContent('胶片');
@@ -141,6 +143,51 @@ describe('filter page states', () => {
 });
 
 describe('local-first filter creation', () => {
+  it('keeps creation unavailable and accurately described while categories are pending', async () => {
+    const release = deferred<void>();
+    server.use(http.get('/api/admin/categories', async () => {
+      await release.promise;
+      return HttpResponse.json({ categories: [categoryFixture] });
+    }));
+    renderFilters();
+
+    const create = await screen.findByRole('button', { name: '新增滤镜' });
+    expect(create).toBeDisabled();
+    expect(create).toHaveAccessibleDescription('正在加载分类，暂时无法新增滤镜。');
+    expect(screen.queryByText('发布滤镜前，请先创建至少一个分类。')).not.toBeInTheDocument();
+
+    release.resolve();
+    await waitFor(() => expect(create).toBeEnabled());
+    expect(create).not.toHaveAccessibleDescription();
+  });
+
+  it('reports category failure without claiming an empty result and enables creation after retry', async () => {
+    let attempts = 0;
+    server.use(http.get('/api/admin/categories', () => {
+      attempts += 1;
+      if (attempts <= 2) {
+        return HttpResponse.json({ code: 'INTERNAL', message: 'temporary' }, { status: 500 });
+      }
+      return HttpResponse.json({ categories: [categoryFixture] });
+    }));
+    const { user } = renderFilters();
+
+    expect(await screen.findByRole('heading', { name: '无法加载滤镜' })).toBeInTheDocument();
+    expect(attempts).toBe(2);
+    const create = screen.getByRole('button', { name: '新增滤镜' });
+    expect(create).toBeDisabled();
+    expect(create).toHaveAccessibleDescription('分类加载失败，请重试后新增滤镜。');
+    expect(screen.queryByText('发布滤镜前，请先创建至少一个分类。')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '重试' }));
+    expect(await screen.findByRole('heading', { name: '暂无滤镜' })).toBeInTheDocument();
+    expect(attempts).toBe(3);
+    expect(create).toBeEnabled();
+    await user.click(create);
+    const dialog = screen.getByRole('dialog', { name: '新增滤镜' });
+    expect(within(dialog).queryByRole('link', { name: '前往分类管理' })).not.toBeInTheDocument();
+  });
+
   it('links to category management and makes save unavailable when no category exists', async () => {
     server.use(http.get('/api/admin/categories', () => HttpResponse.json({ categories: [] })));
     const { user } = renderFilters();
@@ -254,6 +301,29 @@ describe('local-first filter creation', () => {
 
     await user.upload(picker, ncpFile(fixture33, 'PICCON33.NCP'));
     expect(await within(dialog).findByText('SHING TokugawaTone2')).toBeInTheDocument();
+    expect(within(dialog).getByText('Monochrome')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('显示名称')).toHaveValue('SHING TokugawaTone2');
+    expect(within(dialog).queryByText('Fuji Astia')).not.toBeInTheDocument();
+  });
+
+  it('keeps the latest file when an earlier arrayBuffer resolves out of order', async () => {
+    const firstRead = deferred<ArrayBuffer>();
+    const first = new File([fixture02], 'slow-first.NCP', { type: 'application/octet-stream' });
+    Object.defineProperty(first, 'arrayBuffer', { value: () => firstRead.promise });
+    const { user } = renderFilters();
+    const dialog = await openCreate();
+    const picker = within(dialog).getByLabelText('NCP 文件');
+
+    await user.upload(picker, first);
+    await user.upload(picker, ncpFile(fixture33, 'latest-second.NCP'));
+    expect(await within(dialog).findByText('SHING TokugawaTone2')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('显示名称')).toHaveValue('SHING TokugawaTone2');
+
+    await act(async () => {
+      firstRead.resolve(fixture02.slice().buffer);
+      await firstRead.promise;
+    });
+    expect(within(dialog).getByText('SHING TokugawaTone2')).toBeInTheDocument();
     expect(within(dialog).getByText('Monochrome')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('显示名称')).toHaveValue('SHING TokugawaTone2');
     expect(within(dialog).queryByText('Fuji Astia')).not.toBeInTheDocument();

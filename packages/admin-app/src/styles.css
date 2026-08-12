@@ -641,7 +641,20 @@ textarea:focus-visible,
 
 .mobile-card-list {
   display: none;
+  width: 100%;
+  flex-direction: column;
+  align-items: stretch;
   gap: 12px;
+}
+
+.filter-card-list--stacked > .data-card {
+  width: 100%;
+}
+
+.create-availability {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 13px;
 }
 
 .page-state {

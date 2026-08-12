@@ -23,6 +23,14 @@ export function FilterPage() {
   const create = useCreateFilter();
   const { notify } = useNotifications();
   const [createOpen, setCreateOpen] = useState(false);
+  const createAvailabilityId = 'filter-create-availability';
+  const createUnavailable = !categories.isSuccess;
+  const createAvailability = categories.isPending
+    ? '正在加载分类，暂时无法新增滤镜。'
+    : categories.isError ? '分类加载失败，请重试后新增滤镜。' : null;
+  const openCreate = () => {
+    if (categories.isSuccess) setCreateOpen(true);
+  };
   const categoryNames = useMemo(
     () => new Map((categories.data ?? []).map((category) => [category.id, category.name])),
     [categories.data],
@@ -46,7 +54,7 @@ export function FilterPage() {
         kind="empty"
         title="暂无滤镜"
         message="检查并发布第一个 NCP 滤镜。"
-        action={<Button onClick={() => setCreateOpen(true)}>新增滤镜</Button>}
+        action={<Button onClick={openCreate}>新增滤镜</Button>}
       />
     );
   } else {
@@ -64,7 +72,7 @@ export function FilterPage() {
             </tr>
           ))}</tbody>
         </table>
-        <div className="mobile-card-list">{filters.data.map((filter) => (
+        <div className="mobile-card-list filter-card-list--stacked">{filters.data.map((filter) => (
           <article className="data-card filter-card" key={filter.id}>
             <h2>{filter.displayName}</h2>
             <p className="record-secondary">{filter.sourceName}</p>
@@ -83,8 +91,17 @@ export function FilterPage() {
   return (
     <section className="admin-page">
       <header className="page-heading filter-heading">
-        <div><p className="eyebrow">内容管理</p><h1>滤镜</h1><p className="page-heading__copy">检查并发布 NCP，管理展示顺序与状态。</p></div>
-        <Button onClick={() => setCreateOpen(true)}><Plus aria-hidden="true" />新增滤镜</Button>
+        <div>
+          <p className="eyebrow">内容管理</p>
+          <h1>滤镜</h1>
+          <p className="page-heading__copy">检查并发布 NCP，管理展示顺序与状态。</p>
+          {createAvailability ? <p id={createAvailabilityId} className="create-availability">{createAvailability}</p> : null}
+        </div>
+        <Button
+          disabled={createUnavailable}
+          aria-describedby={createAvailability ? createAvailabilityId : undefined}
+          onClick={openCreate}
+        ><Plus aria-hidden="true" />新增滤镜</Button>
       </header>
       {content}
       <FilterCreateDialog

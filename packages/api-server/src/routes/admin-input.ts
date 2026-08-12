@@ -7,16 +7,42 @@ export type AdminBodyMode =
 
 export const SLUG_PATTERN = '^[a-z0-9]+(?:-[a-z0-9]+)*$';
 
+const STRING_FIELDS: Record<AdminBodyMode, readonly string[]> = {
+  'category-create': ['name', 'slug'],
+  'category-patch': ['name', 'slug'],
+  'filter-create': ['ncpBase64', 'displayName', 'categoryId', 'description', 'slug'],
+  'filter-patch': ['displayName', 'categoryId', 'description', 'slug'],
+};
+
+const TRIMMED_FIELDS: Record<AdminBodyMode, readonly string[]> = {
+  'category-create': ['name', 'slug'],
+  'category-patch': ['name', 'slug'],
+  'filter-create': ['displayName', 'description', 'slug'],
+  'filter-patch': ['displayName', 'description', 'slug'],
+};
+
+function invalidField(field: string, message: string): ApiError {
+  return new ApiError(400, 'VALIDATION_ERROR', 'Request validation failed', [
+    { field, message },
+  ]);
+}
+
 export function normalizeAdminBody(mode: AdminBodyMode) {
   return async (req: FastifyRequest, _reply: FastifyReply): Promise<void> => {
     if (typeof req.body !== 'object' || req.body === null || Array.isArray(req.body)) return;
     const body = req.body as Record<string, unknown>;
-    if (body.sortOrder !== undefined && (typeof body.sortOrder !== 'number' || !Number.isInteger(body.sortOrder))) {
-      throw new ApiError(400, 'VALIDATION_ERROR', 'Request validation failed', [
-        { field: 'sortOrder', message: 'must be integer' },
-      ]);
+    for (const field of STRING_FIELDS[mode]) {
+      if (body[field] !== undefined && typeof body[field] !== 'string') {
+        throw invalidField(field, 'must be string');
+      }
     }
-    for (const field of ['name', 'displayName', 'description', 'slug']) {
+    if (body.isEnabled !== undefined && typeof body.isEnabled !== 'boolean') {
+      throw invalidField('isEnabled', 'must be boolean');
+    }
+    if (body.sortOrder !== undefined && (typeof body.sortOrder !== 'number' || !Number.isInteger(body.sortOrder))) {
+      throw invalidField('sortOrder', 'must be integer');
+    }
+    for (const field of TRIMMED_FIELDS[mode]) {
       if (typeof body[field] === 'string') body[field] = body[field].trim();
     }
     if ((mode === 'category-create' || mode === 'filter-create') && body.slug === '') {

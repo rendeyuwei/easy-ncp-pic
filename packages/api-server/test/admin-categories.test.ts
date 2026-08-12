@@ -67,6 +67,26 @@ describe('admin categories', () => {
     expect(res.json().code).toBe('VALIDATION_ERROR');
   });
 
+  it.each([
+    ['name', 123, 'must be string'],
+    ['slug', 123, 'must be string'],
+    ['sortOrder', '1', 'must be integer'],
+    ['isEnabled', 'false', 'must be boolean'],
+    ['isEnabled', 0, 'must be boolean'],
+  ])('rejects a wrong category create type for %s before coercion', async (field, value, message) => {
+    const { app, cookie, csrf } = await authed();
+    const res = await app.app.inject({
+      method: 'POST', url: '/api/admin/categories', headers: { cookie, ...csrf },
+      payload: { name: 'Film', [field]: value },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toMatchObject({
+      code: 'VALIDATION_ERROR', errors: [{ field, message }],
+    });
+    expect(app.db.repos.categories.listAll()).toHaveLength(0);
+  });
+
   it('rejects create without CSRF (403)', async () => {
     const { app, cookie } = await authed();
     const res = await app.app.inject({ method: 'POST', url: '/api/admin/categories', headers: { cookie }, payload: { name: 'X' } });
@@ -137,6 +157,31 @@ describe('admin categories', () => {
     const res = await app.app.inject({ method: 'PATCH', url: `/api/admin/categories/${created.json().category.id}`, headers: { cookie, ...csrf }, payload });
     expect(res.statusCode).toBe(400);
     expect(res.json().code).toBe('VALIDATION_ERROR');
+  });
+
+  it.each([
+    ['name', 123, 'must be string'],
+    ['slug', 123, 'must be string'],
+    ['sortOrder', '1', 'must be integer'],
+    ['isEnabled', 'false', 'must be boolean'],
+    ['isEnabled', 1, 'must be boolean'],
+  ])('rejects a wrong category patch type for %s before coercion', async (field, value, message) => {
+    const { app, cookie, csrf } = await authed();
+    const created = await app.app.inject({
+      method: 'POST', url: '/api/admin/categories', headers: { cookie, ...csrf },
+      payload: { name: 'Film', slug: 'film', sortOrder: 2, isEnabled: true },
+    });
+    const original = created.json().category;
+    const res = await app.app.inject({
+      method: 'PATCH', url: `/api/admin/categories/${original.id}`, headers: { cookie, ...csrf },
+      payload: { [field]: value },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toMatchObject({
+      code: 'VALIDATION_ERROR', errors: [{ field, message }],
+    });
+    expect(app.db.repos.categories.listAll()).toEqual([original]);
   });
 
   it('returns 409 CATEGORY_IN_USE when deleting a category that has filters', async () => {

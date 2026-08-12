@@ -117,6 +117,29 @@ describe('POST /api/admin/filters (NCP upload)', () => {
     expect(res.json().code).toBe('VALIDATION_ERROR');
   });
 
+  it.each([
+    ['ncpBase64', 123, 'must be string'],
+    ['displayName', 123, 'must be string'],
+    ['categoryId', 123, 'must be string'],
+    ['description', 123, 'must be string'],
+    ['slug', 123, 'must be string'],
+    ['sortOrder', '1', 'must be integer'],
+    ['isEnabled', 'false', 'must be boolean'],
+    ['isEnabled', 0, 'must be boolean'],
+  ])('rejects a wrong filter create type for %s before coercion', async (field, value, message) => {
+    const { app, cookie, csrf, categoryId } = await authedWithCategory();
+    const res = await app.app.inject({
+      method: 'POST', url: '/api/admin/filters', headers: { cookie, ...csrf },
+      payload: { ncpBase64: ncpBase64(), displayName: 'Film', categoryId, [field]: value },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toMatchObject({
+      code: 'VALIDATION_ERROR', errors: [{ field, message }],
+    });
+    expect(app.db.repos.filters.listAll()).toHaveLength(0);
+  });
+
   it('enforces the 64 KiB body limit (413)', async () => {
     const { app, cookie, csrf, categoryId } = await authedWithCategory();
     const res = await app.app.inject({
@@ -174,6 +197,36 @@ describe('PATCH/DELETE /api/admin/filters', () => {
     const res = await app.app.inject({ method: 'PATCH', url: `/api/admin/filters/${created.json().filter.id}`, headers: { cookie, ...csrf }, payload });
     expect(res.statusCode).toBe(400);
     expect(res.json().code).toBe('VALIDATION_ERROR');
+  });
+
+  it.each([
+    ['displayName', 123, 'must be string'],
+    ['categoryId', 123, 'must be string'],
+    ['description', 123, 'must be string'],
+    ['slug', 123, 'must be string'],
+    ['sortOrder', '1', 'must be integer'],
+    ['isEnabled', 'false', 'must be boolean'],
+    ['isEnabled', 1, 'must be boolean'],
+  ])('rejects a wrong filter patch type for %s before coercion', async (field, value, message) => {
+    const { app, cookie, csrf, categoryId } = await authedWithCategory();
+    const created = await app.app.inject({
+      method: 'POST', url: '/api/admin/filters', headers: { cookie, ...csrf },
+      payload: {
+        ncpBase64: ncpBase64(), displayName: 'Before', categoryId,
+        description: 'Notes', slug: 'before', sortOrder: 2, isEnabled: true,
+      },
+    });
+    const original = created.json().filter;
+    const res = await app.app.inject({
+      method: 'PATCH', url: `/api/admin/filters/${original.id}`, headers: { cookie, ...csrf },
+      payload: { [field]: value },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toMatchObject({
+      code: 'VALIDATION_ERROR', errors: [{ field, message }],
+    });
+    expect(app.db.repos.filters.listAll()).toEqual([original]);
   });
 
   it('maps duplicate filter update slugs to SLUG_CONFLICT', async () => {

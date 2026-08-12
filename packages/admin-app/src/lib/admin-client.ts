@@ -202,7 +202,7 @@ export class AdminApiClient implements AdminApi {
     headers.set('Accept', 'application/json');
 
     try {
-      return await this.fetchImpl(path, {
+      return await this.fetchImpl.call(globalThis, path, {
         ...init,
         credentials: 'same-origin',
         headers,

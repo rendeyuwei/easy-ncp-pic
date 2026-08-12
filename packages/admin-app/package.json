@@ -9,7 +9,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test"
+    "test:e2e": "pnpm --filter @easypic/database build && pnpm --filter @easypic/ncp-parser build && pnpm --filter @easypic/api-server build && playwright test"
   },
   "dependencies": {
     "@easypic/ncp-parser": "workspace:*",

@@ -52,6 +52,23 @@ const filterPatch: FilterPatch = {
 };
 
 describe('AdminApiClient request contract', () => {
+  it('calls the default browser fetch with the global receiver', async () => {
+    const receiverFetch = vi.fn(function (this: typeof globalThis) {
+      if (this !== globalThis) throw new TypeError('Illegal invocation');
+      return Promise.resolve(jsonResponse({ csrfToken: 'restored-token' }));
+    });
+    vi.stubGlobal('fetch', receiverFetch);
+
+    try {
+      const client = new AdminApiClient();
+
+      await expect(client.restoreSession()).resolves.toBeUndefined();
+      expect(receiverFetch).toHaveBeenCalledOnce();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('stores the login token, adds it only to mutations, and forwards list cancellation', async () => {
     const fetchMock = vi.fn<typeof fetch>();
     fetchMock

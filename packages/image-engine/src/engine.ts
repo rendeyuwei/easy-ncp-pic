@@ -4,7 +4,7 @@ import type { PixelBuffer } from './pixel';
 import { fromUint8Rgba, toUint8Rgba } from './pixel';
 import { parseExifOrientation } from './exif';
 import { scaleBuffer } from './scale';
-import { renderCanvas } from './render-canvas';
+import { canvasRenderer, type ImageRenderer } from './renderer';
 import { decodeImage, encodeImage, detectImageFormat, DEFAULT_JPEG_QUALITY, type EncodeOptions } from './codec';
 import { assertWithinPixelLimits, computePreviewSize, DEFAULT_PREVIEW_LONG_EDGE } from './sizing';
 
@@ -27,9 +27,13 @@ export interface Engine {
   exportImage(image: LoadedImage, params: FilterParams, opts?: ExportOptions): Promise<Uint8Array>;
 }
 
-export function createEngine(platform: Platform): Engine {
+export function createEngine(platform: Platform, renderer: ImageRenderer = canvasRenderer): Engine {
   function renderBuffer(buffer: PixelBuffer, params: FilterParams, intensity: number): PixelBuffer {
-    const rendered = renderCanvas({ data: toUint8Rgba(buffer), width: buffer.width, height: buffer.height }, params, intensity);
+    const rendered = renderer.render(
+      { data: toUint8Rgba(buffer), width: buffer.width, height: buffer.height },
+      params,
+      intensity,
+    );
     return fromUint8Rgba(rendered.data, rendered.width, rendered.height);
   }
 

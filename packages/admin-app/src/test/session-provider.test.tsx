@@ -103,8 +103,8 @@ describe('SessionProvider', () => {
   it('treats only an ApiFailure 401 as anonymous during restoration', async () => {
     renderSession(createApi({ restoreSession: async () => { throw { status: 401 }; } }).api);
 
-    await waitFor(() => expect(screen.getByText('loading')).toBeInTheDocument());
-    expect(screen.getByText('无法恢复登录状态，请重试')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText('无法恢复登录状态，请重试')).toBeInTheDocument());
+    expect(screen.getByText('loading')).toBeInTheDocument();
   });
 
   it('transitions during login and becomes authenticated after login succeeds', async () => {

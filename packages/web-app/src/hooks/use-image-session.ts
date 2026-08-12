@@ -84,12 +84,12 @@ export function useImageSession(
 ): ImageSessionState {
   const [fallbackNotice, setFallbackNotice] = useState<string | null>(null);
   const engineRef = useRef<WorkerEngine | null>(null);
-  if (!engineRef.current) {
-    engineRef.current = engineFactory({
+  const getEngine = useCallback((): WorkerEngine => {
+    if (!engineRef.current) engineRef.current = engineFactory({
       onFallback: () => setFallbackNotice('WebGL 不可用，已切换到兼容模式，处理速度可能较慢。'),
     });
-  }
-  const engine = engineRef.current;
+    return engineRef.current;
+  }, [engineFactory]);
   const imageRef = useRef<WorkerLoadedImage | null>(null);
   const selectedRef = useRef<PublicFilter | null>(null);
   const intensityRef = useRef(1);
@@ -116,6 +116,7 @@ export function useImageSession(
   const renderSelected = useCallback(async (filter: PublicFilter, nextIntensity: number): Promise<void> => {
     const activeImage = imageRef.current;
     if (!activeImage) return;
+    const engine = getEngine();
     const token = ++renderToken.current;
     setBusy(true);
     setError(null);
@@ -134,9 +135,10 @@ export function useImageSession(
     } finally {
       if (token === renderToken.current) setBusy(false);
     }
-  }, [engine, updateProgress]);
+  }, [getEngine, updateProgress]);
 
   const generateThumbnails = useCallback(async (activeImage: WorkerLoadedImage): Promise<void> => {
+    const engine = getEngine();
     const ids = new Set(filters.map((filter) => filter.id));
     setThumbnailLoading(ids);
     const results = await Promise.allSettled(
@@ -150,7 +152,7 @@ export function useImageSession(
     for (const result of results) if (result.status === 'fulfilled') next.set(result.value.id, result.value.pixels);
     setThumbnails(next);
     setThumbnailLoading(new Set());
-  }, [engine, filters]);
+  }, [filters, getEngine]);
 
   const reset = useCallback(async (): Promise<void> => {
     renderToken.current++;
@@ -170,8 +172,8 @@ export function useImageSession(
     setProgressStage(null);
     setBusy(false);
     setError(null);
-    if (active) await engine.disposeImage(active);
-  }, [engine]);
+    if (active) await getEngine().disposeImage(active);
+  }, [getEngine]);
 
   const load = useCallback(async (file: File): Promise<void> => {
     if (!accepts(file)) {
@@ -182,6 +184,7 @@ export function useImageSession(
     setError(null);
     setProgress(0);
     try {
+      const engine = getEngine();
       const previous = imageRef.current;
       if (previous) await engine.disposeImage(previous);
       renderToken.current++;
@@ -206,7 +209,7 @@ export function useImageSession(
     } finally {
       setBusy(false);
     }
-  }, [engine, generateThumbnails, updateProgress]);
+  }, [generateThumbnails, getEngine, updateProgress]);
 
   const selectFilter = useCallback(async (filter: PublicFilter): Promise<void> => {
     selectedRef.current = filter;
@@ -225,6 +228,7 @@ export function useImageSession(
     const activeImage = imageRef.current;
     const filter = selectedRef.current;
     if (!activeImage || !filter) throw new Error('请先选择一个滤镜。');
+    const engine = getEngine();
     setBusy(true);
     setError(null);
     setProgress(0);
@@ -241,14 +245,16 @@ export function useImageSession(
     } finally {
       setBusy(false);
     }
-  }, [engine, updateProgress]);
+  }, [getEngine, updateProgress]);
 
   useEffect(() => () => {
     const active = imageRef.current;
+    const engine = engineRef.current;
     imageRef.current = null;
-    if (active) void engine.disposeImage(active);
-    engine.dispose();
-  }, [engine]);
+    engineRef.current = null;
+    if (active && engine) void engine.disposeImage(active);
+    engine?.dispose();
+  }, []);
 
   return {
     image,

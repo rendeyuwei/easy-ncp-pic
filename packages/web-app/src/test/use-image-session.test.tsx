@@ -1,3 +1,4 @@
+import { StrictMode, type PropsWithChildren } from 'react';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { PixelBuffer, WorkerEngine, WorkerLoadedImage } from '@easypic/image-engine';
@@ -30,6 +31,31 @@ function fakeEngine(overrides: Partial<WorkerEngine> = {}): WorkerEngine {
 }
 
 describe('useImageSession', () => {
+  it('defers Worker creation until after the StrictMode render probe', async () => {
+    let disposed = false;
+    const engine = fakeEngine({
+      load: vi.fn(async () => {
+        if (disposed) throw new Error('Worker engine is disposed');
+        return loaded;
+      }),
+      dispose: vi.fn(() => { disposed = true; }),
+    });
+    const factory: ImageEngineFactory = vi.fn(() => engine);
+    const filters = parsePublicFilters(publicFiltersFixture).categories[0].filters;
+    const wrapper = ({ children }: PropsWithChildren) => <StrictMode>{children}</StrictMode>;
+    const { result } = renderHook(() => useImageSession(filters, factory), { wrapper });
+
+    expect(factory).not.toHaveBeenCalled();
+
+    await act(() => result.current.load(
+      new File([new Uint8Array([1, 2, 3])], 'strict.png', { type: 'image/png' }),
+    ));
+
+    expect(factory).toHaveBeenCalledOnce();
+    expect(engine.load).toHaveBeenCalledOnce();
+    expect(result.current.image).toEqual(loaded);
+  });
+
   it('loads local bytes, creates an original preview, and disposes resources', async () => {
     const engine = fakeEngine();
     const factory: ImageEngineFactory = vi.fn(() => engine);

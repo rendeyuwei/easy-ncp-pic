@@ -16,6 +16,10 @@ if (typeof ImageData === 'undefined') {
   } as typeof ImageData;
 }
 
+if (typeof PointerEvent === 'undefined') {
+  globalThis.PointerEvent = MouseEvent as typeof PointerEvent;
+}
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();

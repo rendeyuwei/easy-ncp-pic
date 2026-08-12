@@ -72,6 +72,7 @@ The root session bootstrap completes before protected content is shown. A neutra
 - **Session provider:** bootstraps, logs in, logs out, stores the in-memory CSRF token, and exposes a small authentication state machine.
 - **API client:** sends JSON requests, includes same-origin credentials, adds the CSRF header to mutations, validates expected response shapes, and converts API errors into typed failures.
 - **Admin shell:** owns responsive navigation, page title, mobile menu, and logout action; it does not own page data.
+- **Theme controller:** applies the shared dark/light design tokens, follows the system preference before an explicit choice, and persists only the appearance preference.
 - **Filter page:** queries filter/category data and coordinates create, edit, and delete dialogs.
 - **NCP inspector:** reads the chosen file, enforces the client size limit, invokes the parser, and returns a typed preview result independent of form submission.
 - **Category page:** queries categories and coordinates create, edit, and delete dialogs.
@@ -113,8 +114,8 @@ Passwords and CSRF tokens are never written to local storage, session storage, U
 ### 5.3 Authentication failures
 
 - Any API `401` after bootstrap clears local session state and navigates to login. An unobtrusive message explains that the session expired.
-- On a mutation `403 CSRF_INVALID`, the API layer performs one session-restoration request and retries the mutation once with the restored token. A second failure clears the local session and requires login.
-- The retry is limited to one attempt and is not applied to login or logout recursively.
+- On a protected mutation, including logout, `403 CSRF_INVALID` makes the API layer perform one session-restoration request and retry the mutation once with the restored token. A second failure clears the local session and requires login.
+- The retry is limited to one attempt. Login and the restoration request itself never enter this path.
 - The API client prevents concurrent restoration requests from creating a request stampede; callers share one in-flight restoration promise.
 
 ### 5.4 Management API consistency
@@ -125,6 +126,8 @@ The administration UI requires conflicts to remain recoverable, so the affected 
 - Category create/update maps a duplicate slug to `409 SLUG_CONFLICT`.
 - Filter create/update maps a duplicate slug to `409 SLUG_CONFLICT`; duplicate NCP bytes continue to use `409 DUPLICATE_NCP`.
 - Filter create/update maps a missing category reference to `400 VALIDATION_ERROR` with a `categoryId` field error.
+- Category names and filter display names are trimmed and must contain `1..100` characters. Descriptions are trimmed and limited to `500` characters. A supplied slug is trimmed, limited to `60` characters, and must match lowercase ASCII segments separated by single hyphens (`[a-z0-9]+(?:-[a-z0-9]+)*`). A blank slug is omitted so the repository derives one. Sort order must be an integer.
+- The Fastify request schemas enforce these bounds, create routes enforce their required fields, and patch routes require at least one editable field. The browser mirrors the same rules for immediate feedback, but the server remains authoritative.
 
 This is limited to constraints exercised by the administration forms and does not introduce a general persistence abstraction.
 
@@ -134,10 +137,12 @@ The administration interface is a practical workspace rather than a visual copy 
 
 - Desktop presents a persistent side navigation with “滤镜”, “分类”, and “退出登录”.
 - Narrow screens replace the side navigation with a labeled menu trigger and overlay navigation.
+- The default appearance follows the system preference, falling back to the dark EasyPic workspace. A labeled theme control switches between dark and light modes and stores only that choice in local storage.
 - Desktop list views use tables. Narrow screens render equivalent cards without hiding required actions or status.
 - Destructive actions require confirmation. Create and edit operations use dialogs with managed initial focus and focus restoration.
 - Keyboard focus is always visible. Controls have accessible names, dialogs have titles/descriptions, status is not conveyed by color alone, and reduced-motion preferences disable nonessential transitions.
 - A global notification region reports successful mutations and page-level failures without replacing field-specific feedback.
+- React Bits is not included in the administration milestone. Its optional motion does not improve the critical authentication or CRUD paths, and standard CSS transitions already satisfy the approved interaction scope.
 
 ## 7. Filter Management
 
@@ -158,11 +163,11 @@ The page has explicit loading, empty, error, and retry states. A missing categor
 
 Creation begins with one `.ncp` file. The inspector:
 
-1. Rejects an empty file or a file larger than 64 KiB before parsing.
+1. Rejects an empty file or a file larger than 64 KiB before parsing as an early abuse guard. The current supported NCP 1.00 layout is exactly 638 bytes; any other length is rejected by `ncp-parser`.
 2. Reads the file into a `Uint8Array` without network access.
 3. Calls `parseNcp` from `@easypic/ncp-parser`.
 4. Distinguishes parser failures from structurally valid but unsupported variants.
-5. Displays source name, base mode, schema/parser version, enabled adjustment values, curve control-point count, LUT size, monochrome settings when applicable, and parser warnings.
+5. Displays source name, NCP source version, parser schema version, base mode, enabled adjustment values, curve control-point count, LUT size, monochrome settings when applicable, and parser warnings.
 6. Allows submission only when parsing succeeds and `supported === true`.
 
 The preview explains that the server will validate the binary again. It does not attempt to render a photo preview because that would add an unrelated image-selection workflow to an administrative metadata task.
@@ -182,7 +187,7 @@ After a supported preview exists, the form collects:
 
 At least one category must exist before a filter can be created. If none exists, the dialog provides a clear link to category management rather than an unusable category field.
 
-On submission, the browser converts the original bytes to Base64 and sends the existing `POST /api/admin/filters` JSON contract. Encoding must avoid argument spreading over the byte array. The server remains authoritative: it decodes, parses, checks support, computes SHA-256, detects duplicates, and persists its own parsed JSON. Client parser output is never sent as trusted parsed data.
+On submission, the browser converts the original bytes to Base64 and sends the existing `POST /api/admin/filters` JSON contract. Encoding must avoid argument spreading over the byte array. The route's 64 KiB `bodyLimit` applies to the complete serialized JSON request, not raw-file length; a Base64-encoded 638-byte supported NCP plus the bounded metadata fields remains safely below that limit. The server remains authoritative: it decodes, parses, checks support, computes SHA-256, detects duplicates, and persists its own parsed JSON. Client parser output is never sent as trusted parsed data.
 
 ### 7.4 Edit and delete
 
@@ -200,7 +205,7 @@ Create calls `POST /api/admin/categories`; edit calls `PATCH /api/admin/categori
 
 If the server returns `409 CATEGORY_IN_USE`, the dialog stays open and explains that filters must be moved or removed before the category can be deleted. The UI does not guess usage from cached filters because the server owns referential integrity.
 
-Category mutations invalidate the category query. Because category names appear in the filter list and category validity affects the create-filter form, they also invalidate the filter query when needed for a consistent view.
+Every successful category mutation invalidates both category and filter queries. Category names appear in the filter list, and category validity affects the create-filter form, so unconditional invalidation is simpler and deterministic.
 
 ## 9. API Data and Cache Rules
 
@@ -225,7 +230,7 @@ The typed API error includes HTTP status, `code`, message, and optional field er
 - `UNAUTHORIZED`: clear local authentication and return to login.
 - `CSRF_INVALID`: restore and retry once as specified above.
 - `VALIDATION_ERROR`: attach returned field errors to matching controls; unmatched errors appear in the form summary.
-- `PAYLOAD_TOO_LARGE`: explain the 64 KiB NCP limit.
+- `PAYLOAD_TOO_LARGE`: explain that the complete upload request exceeded 64 KiB and that the currently supported NCP file itself is 638 bytes.
 - `INVALID_NCP`: explain that the file is empty, damaged, or not a valid supported-layout NCP; include a safe parser code when the server supplies one.
 - `UNSUPPORTED_NCP`: explain that the NCP variant is structurally recognized but cannot be published.
 - `DUPLICATE_NCP`: preserve the form and show the server conflict message.
@@ -260,6 +265,7 @@ Cover:
 - File-size checks, binary reading, parser error classification, and preview-summary derivation.
 - Chunk-safe Base64 conversion and preservation of the original bytes.
 - Safe decoding of persisted `parsedJson` details.
+- System/default theme resolution and persisted dark/light preference without storing authentication material.
 
 ### 11.3 Component tests
 
@@ -268,7 +274,7 @@ Use Testing Library and MSW to verify:
 - Bootstrap loading, anonymous login, authentication errors, successful navigation, logout, and route guards.
 - Filter loading/empty/error states, supported and unsupported NCP selection, form defaults, field errors, conflicts, metadata editing, status changes, and confirmed deletion.
 - Category create/edit/status/delete paths and the in-use conflict.
-- Pending-state double-submit prevention, focus restoration, keyboard access, and responsive-equivalent action availability.
+- Theme switching, pending-state double-submit prevention, focus restoration, keyboard access, and responsive-equivalent action availability.
 
 ### 11.4 Browser tests
 
@@ -281,6 +287,7 @@ Playwright covers the critical workflow against the real Fastify application wit
 5. Verify category deletion conflict while referenced, then delete after the filter is removed.
 6. Reload a protected route and confirm cookie-session restoration without another login.
 7. Verify desktop and mobile navigation reach both management pages.
+8. Switch theme and confirm the preference survives reload independently of authentication state.
 
 Before completion, run admin-app type checking, unit/component tests, production build, browser tests, affected API tests, and the repository-wide test command.
 
@@ -295,5 +302,6 @@ The milestone is complete when:
 - Invalid, oversized, unsupported, and duplicate NCP inputs cannot create a filter and produce actionable messages.
 - Filter metadata, category, sort order, and enabled state can be edited; deletion requires confirmation.
 - Responsive desktop/mobile interfaces expose equivalent critical functionality and remain keyboard accessible.
+- Dark/light appearance follows and persists user preference without adding optional animation dependencies.
 - Errors preserve recoverable user input and do not leak credentials, tokens, stack traces, or trusted HTML.
 - All specified verification suites pass from a clean checkout with the committed lockfile.

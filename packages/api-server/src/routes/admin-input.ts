@@ -11,6 +11,11 @@ export function normalizeAdminBody(mode: AdminBodyMode) {
   return async (req: FastifyRequest, _reply: FastifyReply): Promise<void> => {
     if (typeof req.body !== 'object' || req.body === null || Array.isArray(req.body)) return;
     const body = req.body as Record<string, unknown>;
+    if (body.sortOrder !== undefined && (typeof body.sortOrder !== 'number' || !Number.isInteger(body.sortOrder))) {
+      throw new ApiError(400, 'VALIDATION_ERROR', 'Request validation failed', [
+        { field: 'sortOrder', message: 'must be integer' },
+      ]);
+    }
     for (const field of ['name', 'displayName', 'description', 'slug']) {
       if (typeof body[field] === 'string') body[field] = body[field].trim();
     }

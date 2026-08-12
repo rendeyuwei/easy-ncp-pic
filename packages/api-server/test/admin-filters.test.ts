@@ -106,6 +106,7 @@ describe('POST /api/admin/filters (NCP upload)', () => {
     { slug: 'not_a_slug' },
     { slug: 'a'.repeat(61) },
     { sortOrder: 1.5 },
+    { sortOrder: '1' },
   ])('rejects invalid filter create input: %o', async (overrides) => {
     const { app, cookie, csrf, categoryId } = await authedWithCategory();
     const res = await app.app.inject({
@@ -166,6 +167,7 @@ describe('PATCH/DELETE /api/admin/filters', () => {
     { slug: 'not_a_slug' },
     { slug: 'a'.repeat(61) },
     { sortOrder: 1.5 },
+    { sortOrder: '1' },
   ])('rejects invalid filter patch input: %o', async (payload) => {
     const { app, cookie, csrf, categoryId } = await authedWithCategory();
     const created = await app.app.inject({ method: 'POST', url: '/api/admin/filters', headers: { cookie, ...csrf }, payload: { ncpBase64: ncpBase64(), displayName: 'Before', categoryId } });

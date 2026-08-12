@@ -4,8 +4,11 @@ import { useSession } from '../../session/session-provider';
 import { queryKeys } from '../query-keys';
 
 function isTransient(error: unknown): boolean {
-  return error instanceof ApiFailure
-    && (error.status === 0 || error.status >= 500 || error.code === 'INVALID_RESPONSE');
+  if (!(error instanceof ApiFailure)) return false;
+  if (error.status >= 400 && error.status < 500) return false;
+  return error.status === 0
+    || error.status >= 500
+    || (error.status >= 200 && error.status < 300 && error.code === 'INVALID_RESPONSE');
 }
 
 export function useCategories() {

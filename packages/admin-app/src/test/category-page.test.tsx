@@ -81,6 +81,21 @@ describe('category page states', () => {
     expect(await screen.findByRole('heading', { name: '暂无分类' })).toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: '新增分类' }).length).toBeGreaterThan(0);
   });
+
+  it('does not retry a malformed 4xx response', async () => {
+    let attempts = 0;
+    server.use(http.get('/api/admin/categories', () => {
+      attempts += 1;
+      return HttpResponse.text('{malformed', {
+        status: 409,
+        headers: { 'content-type': 'application/json' },
+      });
+    }));
+    renderCategories();
+
+    expect(await screen.findByRole('heading', { name: '无法加载分类' })).toBeInTheDocument();
+    expect(attempts).toBe(1);
+  });
 });
 
 describe('category form mutations', () => {
@@ -160,7 +175,87 @@ describe('category form mutations', () => {
     expect(slug).toHaveAttribute('aria-invalid', 'true');
     expect(slug).toHaveAccessibleDescription(/该 Slug 已被使用，请选择其他 Slug/);
     expect(screen.getByLabelText('名称')).toHaveValue('保留名称');
+    expect(screen.getByRole('dialog', { name: '新增分类' }))
+      .toHaveAccessibleDescription('填写分类名称、稳定 Slug、排序和启用状态。');
+  });
+
+  it('renders VALIDATION_ERROR for isEnabled beside the checkbox', async () => {
+    server.use(http.post('/api/admin/categories', () => HttpResponse.json({
+      code: 'VALIDATION_ERROR',
+      message: 'invalid category',
+      errors: [{ field: 'isEnabled', message: '必须是布尔值' }],
+    }, { status: 400 })));
+    const { user } = renderCategories();
+
+    await screen.findByRole('table', { name: '分类列表' });
+    await user.click(screen.getByRole('button', { name: '新增分类' }));
+    await user.type(screen.getByLabelText('名称'), '测试分类');
+    await user.click(screen.getByRole('button', { name: '保存分类' }));
+
+    const enabled = await screen.findByRole('checkbox', { name: '启用分类' });
+    expect(enabled).toHaveAttribute('aria-invalid', 'true');
+    expect(enabled).toHaveAccessibleDescription('必须是布尔值');
     expect(screen.getByRole('dialog', { name: '新增分类' })).toBeInTheDocument();
+  });
+
+  it('does not expose field details from unknown or INTERNAL errors', async () => {
+    server.use(http.post('/api/admin/categories', () => HttpResponse.json({
+      code: 'INTERNAL',
+      message: 'raw internal message',
+      errors: [{ field: 'slug', message: 'raw database detail' }],
+    }, { status: 500 })));
+    const { user } = renderCategories();
+
+    await screen.findByRole('table', { name: '分类列表' });
+    await user.click(screen.getByRole('button', { name: '新增分类' }));
+    await user.type(screen.getByLabelText('名称'), '保留名称');
+    await user.type(screen.getByLabelText('Slug（可选）'), 'safe-slug');
+    await user.click(screen.getByRole('button', { name: '保存分类' }));
+
+    const dialog = screen.getByRole('dialog', { name: '新增分类' });
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('保存失败，请重试');
+    expect(dialog).not.toHaveTextContent('raw internal message');
+    expect(dialog).not.toHaveTextContent('raw database detail');
+    expect(screen.getByLabelText('名称')).toHaveValue('保留名称');
+  });
+
+  it('maps RATE_LIMITED save errors to explicit retry-later guidance', async () => {
+    server.use(http.post('/api/admin/categories', () => HttpResponse.json({
+      code: 'RATE_LIMITED',
+      message: 'raw throttle detail',
+    }, { status: 429 })));
+    const { user } = renderCategories();
+
+    await screen.findByRole('table', { name: '分类列表' });
+    await user.click(screen.getByRole('button', { name: '新增分类' }));
+    await user.type(screen.getByLabelText('名称'), '限流测试');
+    await user.click(screen.getByRole('button', { name: '保存分类' }));
+
+    const dialog = screen.getByRole('dialog', { name: '新增分类' });
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('请求过于频繁，请稍后重试');
+    expect(dialog).not.toHaveTextContent('raw throttle detail');
+    expect(screen.getByLabelText('名称')).toHaveValue('限流测试');
+  });
+
+  it('accepts a name containing 60 non-BMP Unicode code points without truncation', async () => {
+    const unicodeName = '😀'.repeat(60);
+    let posted: unknown;
+    server.use(http.post('/api/admin/categories', async ({ request }) => {
+      posted = await request.json();
+      return HttpResponse.json({ category: category({ name: unicodeName, slug: 'unicode' }) }, { status: 201 });
+    }));
+    const { user } = renderCategories();
+
+    await screen.findByRole('table', { name: '分类列表' });
+    await user.click(screen.getByRole('button', { name: '新增分类' }));
+    await user.type(screen.getByLabelText('名称'), unicodeName);
+    await user.click(screen.getByRole('button', { name: '保存分类' }));
+
+    await waitFor(() => expect(posted).toEqual({
+      name: unicodeName,
+      sortOrder: 0,
+      isEnabled: true,
+    }));
   });
 
   it('prefills edit values, keeps the saved slug stable, and disables submission while pending', async () => {
@@ -209,6 +304,7 @@ describe('category deletion', () => {
     await user.click(within(table).getByRole('button', { name: '删除胶片' }));
     let dialog = screen.getByRole('dialog', { name: '删除分类' });
     expect(within(dialog).getByText(/胶片/)).toBeInTheDocument();
+    expect(dialog).toHaveAccessibleDescription('确定要删除“胶片”吗？此操作无法撤销。');
     await user.click(within(dialog).getByRole('button', { name: '取消' }));
     expect(deletes).toBe(0);
 
@@ -236,6 +332,23 @@ describe('category deletion', () => {
 
     expect(await within(dialog).findByRole('alert')).toHaveTextContent('请先移动或删除该分类下的滤镜');
     expect(dialog).toHaveTextContent('胶片');
+    expect(dialog).toBeInTheDocument();
+  });
+
+  it('maps RATE_LIMITED delete errors to explicit retry-later guidance', async () => {
+    server.use(http.delete('/api/admin/categories/:id', () => HttpResponse.json({
+      code: 'RATE_LIMITED',
+      message: 'raw throttle detail',
+    }, { status: 429 })));
+    const { user } = renderCategories();
+
+    const table = await screen.findByRole('table', { name: '分类列表' });
+    await user.click(within(table).getByRole('button', { name: '删除胶片' }));
+    const dialog = screen.getByRole('dialog', { name: '删除分类' });
+    await user.click(within(dialog).getByRole('button', { name: '删除分类' }));
+
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('请求过于频繁，请稍后重试');
+    expect(dialog).not.toHaveTextContent('raw throttle detail');
     expect(dialog).toBeInTheDocument();
   });
 });

@@ -483,6 +483,11 @@ textarea:focus-visible,
   cursor: pointer;
 }
 
+.checkbox-field-group {
+  display: grid;
+  gap: 4px;
+}
+
 .checkbox-field input {
   width: 19px;
   height: 19px;

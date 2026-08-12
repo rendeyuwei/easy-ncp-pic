@@ -57,6 +57,8 @@ export function CategoryPage() {
     } catch (error) {
       if (error instanceof ApiFailure && error.code === 'CATEGORY_IN_USE') {
         setDeleteError('请先移动或删除该分类下的滤镜，然后再删除分类。');
+      } else if (error instanceof ApiFailure && error.code === 'RATE_LIMITED') {
+        setDeleteError('请求过于频繁，请稍后重试');
       } else {
         setDeleteError('删除失败，请重试');
       }
@@ -118,7 +120,7 @@ export function CategoryPage() {
         }}
       />
       <Dialog open={deleting !== null} onOpenChange={(open) => { if (!open && !remove.isPending) setDeleting(null); }}>
-        <DialogContent aria-describedby={undefined}>
+        <DialogContent>
           <DialogHeader>
             <DialogTitle>删除分类</DialogTitle>
             <DialogDescription>确定要删除“{deleting?.name}”吗？此操作无法撤销。</DialogDescription>

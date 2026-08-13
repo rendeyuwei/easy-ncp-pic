@@ -106,6 +106,7 @@ export function useImageSession(
   const thumbnailQueuedIds = useRef(new Set<string>());
   const thumbnailRunning = useRef(false);
   const thumbnailImageId = useRef<string | null>(null);
+  const latestThumbnailFilters = useRef<ReadonlyArray<PublicFilter>>([]);
 
   const [image, setImage] = useState<WorkerLoadedImage | null>(null);
   const [fileName, setFileName] = useState('');
@@ -213,6 +214,25 @@ export function useImageSession(
     }
   }, [getEngine]);
 
+  const enqueueThumbnails = useCallback((requestedFilters: ReadonlyArray<PublicFilter>): void => {
+    const activeImage = imageRef.current;
+    if (!activeImage || thumbnailImageId.current !== activeImage.id) return;
+    const addedIds: string[] = [];
+    for (const filter of requestedFilters) {
+      if (thumbnailQueuedIds.current.has(filter.id)) continue;
+      thumbnailQueuedIds.current.add(filter.id);
+      thumbnailQueue.current.push(filter);
+      addedIds.push(filter.id);
+    }
+    if (addedIds.length === 0) return;
+    setThumbnailLoading((current) => {
+      const next = new Set(current);
+      for (const id of addedIds) next.add(id);
+      return next;
+    });
+    void pumpThumbnails();
+  }, [pumpThumbnails]);
+
   const reset = useCallback(async (): Promise<void> => {
     loadToken.current++;
     renderToken.current++;
@@ -220,6 +240,7 @@ export function useImageSession(
     thumbnailQueue.current = [];
     thumbnailQueuedIds.current.clear();
     thumbnailImageId.current = null;
+    latestThumbnailFilters.current = [];
     const active = imageRef.current;
     imageRef.current = null;
     selectedRef.current = null;
@@ -292,17 +313,19 @@ export function useImageSession(
       setOriginalPreview(preview);
       setFilteredPreview(preview);
       setProgress(1);
+      enqueueThumbnails(latestThumbnailFilters.current);
       if (previous && previous.id !== loaded.id) await engine.disposeImage(previous);
     } catch (loadError) {
       if (token === loadToken.current) {
         thumbnailImageId.current = imageRef.current?.id ?? null;
+        enqueueThumbnails(latestThumbnailFilters.current);
         setError(userError(loadError, 'load'));
       }
     } finally {
       if (loaded && !committed && engine) await engine.disposeImage(loaded).catch(() => undefined);
       if (token === loadToken.current) setBusy(false);
     }
-  }, [getEngine, updateProgress]);
+  }, [enqueueThumbnails, getEngine, updateProgress]);
 
   const selectFilter = useCallback(async (filter: PublicFilter): Promise<void> => {
     setPendingFilter(filter);
@@ -310,23 +333,9 @@ export function useImageSession(
   }, [renderSelected]);
 
   const requestThumbnails = useCallback((requestedFilters: ReadonlyArray<PublicFilter>): void => {
-    const activeImage = imageRef.current;
-    if (!activeImage || thumbnailImageId.current !== activeImage.id) return;
-    const addedIds: string[] = [];
-    for (const filter of requestedFilters) {
-      if (thumbnailQueuedIds.current.has(filter.id)) continue;
-      thumbnailQueuedIds.current.add(filter.id);
-      thumbnailQueue.current.push(filter);
-      addedIds.push(filter.id);
-    }
-    if (addedIds.length === 0) return;
-    setThumbnailLoading((current) => {
-      const next = new Set(current);
-      for (const id of addedIds) next.add(id);
-      return next;
-    });
-    void pumpThumbnails();
-  }, [image, pumpThumbnails]);
+    latestThumbnailFilters.current = [...requestedFilters];
+    enqueueThumbnails(requestedFilters);
+  }, [enqueueThumbnails, image]);
 
   const setIntensity = useCallback((value: number): void => {
     const next = Math.min(1, Math.max(0, value));
@@ -365,6 +374,7 @@ export function useImageSession(
     thumbnailQueue.current = [];
     thumbnailQueuedIds.current.clear();
     thumbnailImageId.current = null;
+    latestThumbnailFilters.current = [];
     const active = imageRef.current;
     const engine = engineRef.current;
     imageRef.current = null;

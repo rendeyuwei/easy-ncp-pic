@@ -324,7 +324,7 @@ describe('useImageSession', () => {
     expect(engine.renderThumbnail).toHaveBeenCalledTimes(2);
   });
 
-  it('discards pending thumbnails and queued work when a replacement photo loads', async () => {
+  it('discards stale thumbnails and replays visible work for a replacement photo', async () => {
     const pending = deferred<PixelBuffer>();
     const replacement = { ...loaded, id: 'replacement-image' };
     const engine = fakeEngine({
@@ -353,10 +353,9 @@ describe('useImageSession', () => {
 
     expect(result.current.image).toEqual(replacement);
     expect(result.current.thumbnails.size).toBe(0);
-    expect(result.current.thumbnailLoading.size).toBe(0);
+    expect(result.current.thumbnailLoading).toEqual(new Set(filters.map((filter) => filter.id)));
     expect(engine.renderThumbnail).toHaveBeenCalledOnce();
 
-    act(() => result.current.requestThumbnails([filters[0]]));
     await waitFor(() => expect(result.current.thumbnails.get(filters[0].id)).toEqual(newer));
     expect(engine.renderThumbnail).toHaveBeenLastCalledWith(replacement, expect.any(Object), 96);
   });
@@ -390,11 +389,43 @@ describe('useImageSession', () => {
     expect(result.current.thumbnails.size).toBe(0);
 
     await act(async () => { replacementLoad.resolve(replacement); await replacementRequest; });
-    act(() => result.current.requestThumbnails(filters));
     await waitFor(() => expect(result.current.thumbnails.get(filters[0].id)).toEqual(newer));
 
     expect(engine.renderThumbnail).toHaveBeenCalledOnce();
     expect(engine.renderThumbnail).toHaveBeenCalledWith(replacement, expect.any(Object), 96);
+  });
+
+  it('retries a visible-category request automatically when replacement loading fails', async () => {
+    const replacementLoad = deferred<WorkerLoadedImage>();
+    const engine = fakeEngine({
+      load: vi.fn()
+        .mockResolvedValueOnce(loaded)
+        .mockImplementationOnce(() => replacementLoad.promise),
+      renderThumbnail: vi.fn().mockResolvedValue(newer),
+    });
+    const filters = parsePublicFilters(publicFiltersFixture).categories[0].filters;
+    const { result } = renderHook(() => useImageSession(filters, () => engine));
+    await act(() => result.current.load(new File([new Uint8Array([1])], 'first.png', { type: 'image/png' })));
+
+    let replacementRequest!: Promise<void>;
+    act(() => {
+      replacementRequest = result.current.load(
+        new File([new Uint8Array([2])], 'replacement.png', { type: 'image/png' }),
+      );
+    });
+    await waitFor(() => expect(engine.load).toHaveBeenCalledTimes(2));
+    act(() => result.current.requestThumbnails(filters));
+    expect(engine.renderThumbnail).not.toHaveBeenCalled();
+
+    await act(async () => {
+      replacementLoad.reject(new Error('replacement load failed'));
+      await replacementRequest;
+    });
+    await waitFor(() => expect(result.current.thumbnails.get(filters[0].id)).toEqual(newer));
+
+    expect(result.current.image).toEqual(loaded);
+    expect(engine.renderThumbnail).toHaveBeenCalledOnce();
+    expect(engine.renderThumbnail).toHaveBeenCalledWith(loaded, expect.any(Object), 96);
   });
 
   it('invalidates running and queued thumbnails when the session resets', async () => {

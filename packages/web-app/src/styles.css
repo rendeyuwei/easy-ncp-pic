@@ -460,14 +460,6 @@ input:focus-visible,
   backdrop-filter: blur(8px);
 }
 
-.photo-compare__label--original {
-  left: 12px;
-}
-
-.photo-compare__label--filtered {
-  right: 12px;
-}
-
 .editor-controls {
   display: grid;
   width: min(100%, 1080px);

@@ -5,7 +5,14 @@ import { fromUint8Rgba, toUint8Rgba } from './pixel';
 import { parseExifOrientation } from './exif';
 import { scaleBuffer } from './scale';
 import { canvasRenderer, type ImageRenderer } from './renderer';
-import { decodeImage, encodeImage, detectImageFormat, DEFAULT_JPEG_QUALITY, type EncodeOptions } from './codec';
+import {
+  decodeImage,
+  encodeImage,
+  detectImageFormat,
+  parseEncodedImageDimensions,
+  DEFAULT_JPEG_QUALITY,
+  type EncodeOptions,
+} from './codec';
 import { assertWithinPixelLimits, computePreviewSize, DEFAULT_PREVIEW_LONG_EDGE } from './sizing';
 
 export interface LoadedImage {
@@ -42,6 +49,8 @@ export function createEngine(platform: Platform, renderer: ImageRenderer = canva
       // The platform delivers EXIF-ORIENTED pixels (browser auto-orients at decode; the
       // Node test platform simulates it in nodeDecode). The engine does NOT re-apply
       // orientation (that would double-rotate). `orientation` is source metadata only.
+      const encodedDimensions = parseEncodedImageDimensions(bytes);
+      if (encodedDimensions) assertWithinPixelLimits(encodedDimensions.width, encodedDimensions.height);
       const decoded = await decodeImage(bytes, platform);
       assertWithinPixelLimits(decoded.width, decoded.height);
       const orientation = parseExifOrientation(bytes);

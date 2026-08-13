@@ -72,4 +72,24 @@ describe('UploadScreen', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('请选择 JPG 或 PNG 照片');
     expect(onFile).not.toHaveBeenCalled();
   });
+
+  it('ignores picker and drop interactions while loading and reports progress', () => {
+    const onFile = vi.fn();
+    render(<UploadScreen onFile={onFile} busy progress={0.42} />);
+    const input = screen.getByLabelText('选择一张照片');
+    const inputClick = vi.spyOn(input, 'click');
+    const dropzone = screen.getByRole('button', { name: '上传照片' });
+    const file = new File(['png'], 'later.png', { type: 'image/png' });
+
+    fireEvent.click(dropzone);
+    fireEvent.keyDown(dropzone, { key: 'Enter' });
+    fireEvent.drop(dropzone, { dataTransfer: { files: [file] } });
+
+    expect(inputClick).not.toHaveBeenCalled();
+    expect(onFile).not.toHaveBeenCalled();
+    expect(dropzone).toHaveAttribute('aria-disabled', 'true');
+    expect(dropzone).toHaveAttribute('tabindex', '-1');
+    expect(screen.getByRole('status')).toHaveTextContent('正在打开照片 42%');
+    expect(screen.getByRole('progressbar')).toHaveAttribute('value', '0.42');
+  });
 });

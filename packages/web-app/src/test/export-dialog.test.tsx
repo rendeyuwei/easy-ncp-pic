@@ -107,6 +107,7 @@ describe('ExportDialog', () => {
     expect(screen.getByRole('progressbar')).toHaveAttribute('value', '0.42');
     expect(screen.getByRole('radio', { name: 'PNG' })).toBeDisabled();
     expect(screen.getByRole('button', { name: '正在导出…' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: '关闭' })).not.toBeInTheDocument();
   });
 
   it('preserves the dialog and selection when export fails', async () => {
@@ -129,7 +130,7 @@ describe('ExportDialog', () => {
     await user.click(screen.getByRole('button', { name: '导出照片' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
-      '导出失败。编辑状态已保留，请重试或改用 JPG。',
+      '导出失败。编辑状态已保留，请重试。',
     );
     expect(screen.getByRole('radio', { name: 'PNG' })).toBeChecked();
     expect(onOpenChange).not.toHaveBeenCalledWith(false);

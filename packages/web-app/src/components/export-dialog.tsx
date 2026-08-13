@@ -55,7 +55,7 @@ export function ExportDialog({
       downloadBytes(bytes, type, buildDownloadName(sourceName, type));
       onOpenChange(false);
     } catch {
-      setError('导出失败。编辑状态已保留，请重试或改用 JPG。');
+      setError('导出失败。编辑状态已保留，请重试。');
     } finally {
       setSubmitting(false);
     }
@@ -63,7 +63,7 @@ export function ExportDialog({
 
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => !exporting && onOpenChange(nextOpen)}>
-      <DialogContent aria-describedby="export-description">
+      <DialogContent aria-describedby="export-description" showClose={!exporting}>
         <DialogHeader>
           <DialogTitle>导出照片</DialogTitle>
           <DialogDescription id="export-description">

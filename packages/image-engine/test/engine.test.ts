@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -40,6 +40,29 @@ beforeAll(() => {
 });
 
 describe('engine', () => {
+  it('rejects oversized PNG and JPEG headers before allocating decoded pixels', async () => {
+    const decode = vi.fn<Platform['decode']>();
+    const guarded = createEngine({
+      decode,
+      encode: nodePlatform.encode,
+    });
+    const oversizedPng = new Uint8Array([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+      0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+      0x00, 0x00, 0x27, 0x11, 0x00, 0x00, 0x00, 0x64,
+    ]);
+    const oversizedJpeg = new Uint8Array([
+      0xff, 0xd8,
+      0xff, 0xe0, 0x00, 0x04, 0x00, 0x00,
+      0xff, 0xc0, 0x00, 0x11, 0x08, 0x23, 0x28, 0x23, 0x28,
+      0x03, 0x01, 0x11, 0x00, 0x02, 0x11, 0x00, 0x03, 0x11, 0x00,
+    ]);
+
+    await expect(guarded.load(oversizedPng)).rejects.toThrow(/10000|side|dimension/i);
+    await expect(guarded.load(oversizedJpeg)).rejects.toThrow(/80000000|pixel|total/i);
+    expect(decode).not.toHaveBeenCalled();
+  });
+
   it('load decodes and reports dimensions', async () => {
     const img = await makeTestImage(40, 30, 'image/png');
     const loaded = await engine.load(img);

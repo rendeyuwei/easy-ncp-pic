@@ -33,6 +33,7 @@ export function App() {
         <UploadScreen
           selectedFileName={selectedFileName}
           busy={session.busy}
+          progress={session.progress}
           error={session.error ?? queryError}
           onFile={(file) => {
             setSelectedFileName(file.name);

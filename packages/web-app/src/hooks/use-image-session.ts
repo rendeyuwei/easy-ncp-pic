@@ -105,6 +105,7 @@ export function useImageSession(
   const thumbnailQueue = useRef<PublicFilter[]>([]);
   const thumbnailQueuedIds = useRef(new Set<string>());
   const thumbnailRunning = useRef(false);
+  const thumbnailImageId = useRef<string | null>(null);
 
   const [image, setImage] = useState<WorkerLoadedImage | null>(null);
   const [fileName, setFileName] = useState('');
@@ -179,7 +180,11 @@ export function useImageSession(
         let cached = false;
         try {
           const pixels = await getEngine().renderThumbnail(activeImage, toFilterParams(filter), 96);
-          if (generation === thumbnailGeneration.current && imageRef.current?.id === activeImage.id) {
+          if (
+            generation === thumbnailGeneration.current
+            && imageRef.current?.id === activeImage.id
+            && thumbnailImageId.current === activeImage.id
+          ) {
             cached = true;
             setThumbnails((current) => {
               const next = new Map(current);
@@ -214,6 +219,7 @@ export function useImageSession(
     thumbnailGeneration.current++;
     thumbnailQueue.current = [];
     thumbnailQueuedIds.current.clear();
+    thumbnailImageId.current = null;
     const active = imageRef.current;
     imageRef.current = null;
     selectedRef.current = null;
@@ -246,6 +252,7 @@ export function useImageSession(
     thumbnailGeneration.current++;
     thumbnailQueue.current = [];
     thumbnailQueuedIds.current.clear();
+    thumbnailImageId.current = null;
     setPendingFilter(null);
     setThumbnails(new Map());
     setThumbnailLoading(new Set());
@@ -271,6 +278,7 @@ export function useImageSession(
       if (token !== loadToken.current) return;
       const previous = imageRef.current;
       imageRef.current = loaded;
+      thumbnailImageId.current = loaded.id;
       committed = true;
       setImage(loaded);
       setFileName(file.name);
@@ -286,7 +294,10 @@ export function useImageSession(
       setProgress(1);
       if (previous && previous.id !== loaded.id) await engine.disposeImage(previous);
     } catch (loadError) {
-      if (token === loadToken.current) setError(userError(loadError, 'load'));
+      if (token === loadToken.current) {
+        thumbnailImageId.current = imageRef.current?.id ?? null;
+        setError(userError(loadError, 'load'));
+      }
     } finally {
       if (loaded && !committed && engine) await engine.disposeImage(loaded).catch(() => undefined);
       if (token === loadToken.current) setBusy(false);
@@ -299,7 +310,8 @@ export function useImageSession(
   }, [renderSelected]);
 
   const requestThumbnails = useCallback((requestedFilters: ReadonlyArray<PublicFilter>): void => {
-    if (!imageRef.current) return;
+    const activeImage = imageRef.current;
+    if (!activeImage || thumbnailImageId.current !== activeImage.id) return;
     const addedIds: string[] = [];
     for (const filter of requestedFilters) {
       if (thumbnailQueuedIds.current.has(filter.id)) continue;
@@ -352,6 +364,7 @@ export function useImageSession(
     thumbnailGeneration.current++;
     thumbnailQueue.current = [];
     thumbnailQueuedIds.current.clear();
+    thumbnailImageId.current = null;
     const active = imageRef.current;
     const engine = engineRef.current;
     imageRef.current = null;

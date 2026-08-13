@@ -1,6 +1,6 @@
 import { StrictMode, type PropsWithChildren } from 'react';
 import { act, renderHook, waitFor } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { PixelBuffer, WorkerEngine, WorkerLoadedImage } from '@easypic/image-engine';
 import { useImageSession, type ImageEngineFactory } from '../hooks/use-image-session';
 import { parsePublicFilters } from '../lib/filters';
@@ -29,6 +29,8 @@ function fakeEngine(overrides: Partial<WorkerEngine> = {}): WorkerEngine {
     ...overrides,
   };
 }
+
+afterEach(() => vi.useRealTimers());
 
 describe('useImageSession', () => {
   it('defers Worker creation until after the StrictMode render probe', async () => {
@@ -290,24 +292,36 @@ describe('useImageSession', () => {
     expect([...result.current.thumbnails.keys()]).toEqual(filters.map((filter) => filter.id));
   });
 
-  it('deduplicates queued, running, and cached thumbnail requests', async () => {
-    const pending = deferred<PixelBuffer>();
-    const engine = fakeEngine({ renderThumbnail: vi.fn(() => pending.promise) });
-    const filters = parsePublicFilters(publicFiltersFixture).categories[0].filters;
+  it('deduplicates a thumbnail ID queued behind another filter', async () => {
+    const first = deferred<PixelBuffer>();
+    const engine = fakeEngine({
+      renderThumbnail: vi.fn()
+        .mockImplementationOnce(() => first.promise)
+        .mockResolvedValueOnce(newer),
+    });
+    const filters = parsePublicFilters({
+      categories: [{ ...publicFiltersFixture.categories[0], filters: [
+        publicFiltersFixture.categories[0].filters[0],
+        { ...publicFiltersFixture.categories[0].filters[0], id: 'filter-2', displayName: 'Second' },
+      ] }],
+    }).categories[0].filters;
     const { result } = renderHook(() => useImageSession(filters, () => engine));
     await act(() => result.current.load(new File([new Uint8Array([1])], 'p.png', { type: 'image/png' })));
 
     act(() => {
-      result.current.requestThumbnails([filters[0], filters[0]]);
       result.current.requestThumbnails(filters);
+      result.current.requestThumbnails([filters[1]]);
     });
     expect(engine.renderThumbnail).toHaveBeenCalledOnce();
+    expect(result.current.thumbnailLoading).toEqual(new Set(filters.map((filter) => filter.id)));
 
-    await act(async () => { pending.resolve(original); await pending.promise; });
-    await waitFor(() => expect(result.current.thumbnails.has(filters[0].id)).toBe(true));
-    act(() => result.current.requestThumbnails(filters));
+    await act(async () => { first.resolve(original); await first.promise; });
+    await waitFor(() => expect(result.current.thumbnails.get(filters[1].id)).toEqual(newer));
 
-    expect(engine.renderThumbnail).toHaveBeenCalledOnce();
+    expect(engine.renderThumbnail).toHaveBeenCalledTimes(2);
+    expect([...result.current.thumbnails.keys()]).toEqual(filters.map((filter) => filter.id));
+    act(() => result.current.requestThumbnails([filters[1]]));
+    expect(engine.renderThumbnail).toHaveBeenCalledTimes(2);
   });
 
   it('discards pending thumbnails and queued work when a replacement photo loads', async () => {
@@ -347,6 +361,117 @@ describe('useImageSession', () => {
     expect(engine.renderThumbnail).toHaveBeenLastCalledWith(replacement, expect.any(Object), 96);
   });
 
+  it('does not cache old-photo thumbnails requested while a replacement load is pending', async () => {
+    const replacementLoad = deferred<WorkerLoadedImage>();
+    const replacement = { ...loaded, id: 'replacement-image' };
+    const engine = fakeEngine({
+      load: vi.fn()
+        .mockResolvedValueOnce(loaded)
+        .mockImplementationOnce(() => replacementLoad.promise),
+      renderPreview: vi.fn()
+        .mockResolvedValueOnce(original)
+        .mockResolvedValueOnce(newer),
+      renderThumbnail: vi.fn(async (image) => image.id === loaded.id ? older : newer),
+    });
+    const filters = parsePublicFilters(publicFiltersFixture).categories[0].filters;
+    const { result } = renderHook(() => useImageSession(filters, () => engine));
+    await act(() => result.current.load(new File([new Uint8Array([1])], 'first.png', { type: 'image/png' })));
+
+    let replacementRequest!: Promise<void>;
+    act(() => {
+      replacementRequest = result.current.load(
+        new File([new Uint8Array([2])], 'replacement.png', { type: 'image/png' }),
+      );
+    });
+    await waitFor(() => expect(engine.load).toHaveBeenCalledTimes(2));
+    act(() => result.current.requestThumbnails(filters));
+    await act(async () => { await Promise.resolve(); });
+
+    expect(result.current.thumbnails.size).toBe(0);
+
+    await act(async () => { replacementLoad.resolve(replacement); await replacementRequest; });
+    act(() => result.current.requestThumbnails(filters));
+    await waitFor(() => expect(result.current.thumbnails.get(filters[0].id)).toEqual(newer));
+
+    expect(engine.renderThumbnail).toHaveBeenCalledOnce();
+    expect(engine.renderThumbnail).toHaveBeenCalledWith(replacement, expect.any(Object), 96);
+  });
+
+  it('invalidates running and queued thumbnails when the session resets', async () => {
+    const pending = deferred<PixelBuffer>();
+    const engine = fakeEngine({ renderThumbnail: vi.fn(() => pending.promise) });
+    const filters = parsePublicFilters({
+      categories: [{ ...publicFiltersFixture.categories[0], filters: [
+        publicFiltersFixture.categories[0].filters[0],
+        { ...publicFiltersFixture.categories[0].filters[0], id: 'filter-2', displayName: 'Second' },
+      ] }],
+    }).categories[0].filters;
+    const { result } = renderHook(() => useImageSession(filters, () => engine));
+    await act(() => result.current.load(new File([new Uint8Array([1])], 'p.png', { type: 'image/png' })));
+    vi.useFakeTimers();
+    try {
+      act(() => result.current.requestThumbnails(filters));
+
+      await act(() => result.current.reset());
+      await act(async () => { pending.resolve(older); await pending.promise; });
+      await act(async () => { await vi.runOnlyPendingTimersAsync(); });
+
+      expect(result.current.image).toBeNull();
+      expect(result.current.thumbnails.size).toBe(0);
+      expect(result.current.thumbnailLoading.size).toBe(0);
+      expect(engine.renderThumbnail).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not submit queued thumbnails after unmount invalidates the session', async () => {
+    const pending = deferred<PixelBuffer>();
+    const engine = fakeEngine({ renderThumbnail: vi.fn(() => pending.promise) });
+    const filters = parsePublicFilters({
+      categories: [{ ...publicFiltersFixture.categories[0], filters: [
+        publicFiltersFixture.categories[0].filters[0],
+        { ...publicFiltersFixture.categories[0].filters[0], id: 'filter-2', displayName: 'Second' },
+      ] }],
+    }).categories[0].filters;
+    const { result, unmount } = renderHook(() => useImageSession(filters, () => engine));
+    await act(() => result.current.load(new File([new Uint8Array([1])], 'p.png', { type: 'image/png' })));
+    vi.useFakeTimers();
+    try {
+      act(() => result.current.requestThumbnails(filters));
+
+      unmount();
+      await act(async () => { pending.resolve(older); await pending.promise; });
+      await act(async () => { await vi.runOnlyPendingTimersAsync(); });
+
+      expect(engine.renderThumbnail).toHaveBeenCalledOnce();
+      expect(engine.disposeImage).toHaveBeenCalledWith(loaded);
+      expect(engine.dispose).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('allows an explicitly requested thumbnail to retry after rendering fails', async () => {
+    const engine = fakeEngine({
+      renderThumbnail: vi.fn()
+        .mockRejectedValueOnce(new Error('thumbnail failed'))
+        .mockResolvedValueOnce(newer),
+    });
+    const filters = parsePublicFilters(publicFiltersFixture).categories[0].filters;
+    const { result } = renderHook(() => useImageSession(filters, () => engine));
+    await act(() => result.current.load(new File([new Uint8Array([1])], 'p.png', { type: 'image/png' })));
+
+    act(() => result.current.requestThumbnails(filters));
+    await waitFor(() => expect(result.current.thumbnailLoading.size).toBe(0));
+    expect(result.current.thumbnails.size).toBe(0);
+
+    act(() => result.current.requestThumbnails(filters));
+    await waitFor(() => expect(result.current.thumbnails.get(filters[0].id)).toEqual(newer));
+
+    expect(engine.renderThumbnail).toHaveBeenCalledTimes(2);
+  });
+
   it('lets a user preview enter the worker queue between thumbnail items', async () => {
     const firstThumbnail = deferred<PixelBuffer>();
     const secondThumbnail = deferred<PixelBuffer>();
@@ -377,20 +502,27 @@ describe('useImageSession', () => {
     }).categories[0].filters;
     const { result } = renderHook(() => useImageSession(filters, () => engine));
     await act(() => result.current.load(new File([new Uint8Array([1])], 'p.png', { type: 'image/png' })));
-    act(() => result.current.requestThumbnails(filters));
+    vi.useFakeTimers();
+    try {
+      act(() => result.current.requestThumbnails(filters));
 
-    await act(async () => { firstThumbnail.resolve(original); await firstThumbnail.promise; });
-    let previewRequest!: Promise<void>;
-    act(() => { previewRequest = result.current.selectFilter(filters[1]); });
+      await act(async () => { firstThumbnail.resolve(original); await firstThumbnail.promise; });
+      let previewRequest!: Promise<void>;
+      act(() => { previewRequest = result.current.selectFilter(filters[1]); });
 
-    expect(submissions).toEqual(['thumbnail-1', 'preview']);
-    expect(result.current.pendingFilter?.id).toBe(filters[1].id);
-    await waitFor(() => expect(submissions).toEqual(['thumbnail-1', 'preview', 'thumbnail-2']));
+      expect(submissions).toEqual(['thumbnail-1', 'preview']);
+      expect(result.current.pendingFilter?.id).toBe(filters[1].id);
+      await act(async () => { await vi.runOnlyPendingTimersAsync(); });
+      expect(submissions).toEqual(['thumbnail-1', 'preview', 'thumbnail-2']);
 
-    await act(async () => { preview.resolve(newer); await previewRequest; });
-    await act(async () => { secondThumbnail.resolve(older); await secondThumbnail.promise; });
-    expect(result.current.selectedFilter?.id).toBe(filters[1].id);
-    expect(result.current.filteredPreview).toEqual(newer);
+      await act(async () => { preview.resolve(newer); await previewRequest; });
+      await act(async () => { secondThumbnail.resolve(older); await secondThumbnail.promise; });
+      await act(async () => { await vi.runOnlyPendingTimersAsync(); });
+      expect(result.current.selectedFilter?.id).toBe(filters[1].id);
+      expect(result.current.filteredPreview).toEqual(newer);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('clamps intensity and preserves editor state when export rejects', async () => {

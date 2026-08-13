@@ -14,6 +14,7 @@ vi.mock('../lib/pixels', () => ({ drawPixelBuffer: vi.fn() }));
 
 const categories = parsePublicFilters(publicFiltersFixture).categories;
 const selectedFilter = categories[0].filters[0];
+const pendingFilter = { ...selectedFilter, id: 'pending-filter', displayName: 'Pending Filter' };
 const pixels: PixelBuffer = { width: 4, height: 3, data: new Float32Array(48) };
 const image: WorkerLoadedImage = {
   id: 'image-1',
@@ -28,6 +29,7 @@ function session(overrides: Partial<ImageSessionState> = {}): ImageSessionState 
     image,
     fileName: 'portrait.jpg',
     selectedFilter,
+    pendingFilter: null,
     intensity: 1,
     originalPreview: pixels,
     filteredPreview: pixels,
@@ -43,6 +45,7 @@ function session(overrides: Partial<ImageSessionState> = {}): ImageSessionState 
     setIntensity: vi.fn(),
     exportImage: vi.fn().mockResolvedValue(new Uint8Array([1])),
     reset: vi.fn().mockResolvedValue(undefined),
+    requestThumbnails: vi.fn(),
     ...overrides,
   };
 }
@@ -85,6 +88,17 @@ describe('App editor integration', () => {
     intensity.focus();
     await user.keyboard('{ArrowLeft}');
     expect(state.setIntensity).toHaveBeenCalledWith(0.99);
+  });
+
+  it('keeps committed pixels named while announcing and requesting pending filter work', () => {
+    const state = session({ pendingFilter });
+    vi.mocked(useImageSession).mockReturnValue(state);
+
+    render(<App />);
+
+    expect(screen.getByRole('heading', { name: 'Fuji Astia' })).toBeInTheDocument();
+    expect(screen.getByText('正在应用 Pending Filter…')).toBeInTheDocument();
+    expect(state.requestThumbnails).toHaveBeenCalledWith(categories[0].filters);
   });
 
   it('shows the original only while the compare control is held', () => {

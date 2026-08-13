@@ -17,6 +17,7 @@ export interface ImageSessionState {
   image: WorkerLoadedImage | null;
   fileName: string;
   selectedFilter: PublicFilter | null;
+  pendingFilter: PublicFilter | null;
   intensity: number;
   originalPreview: PixelBuffer | null;
   filteredPreview: PixelBuffer | null;
@@ -29,6 +30,7 @@ export interface ImageSessionState {
   fallbackNotice: string | null;
   load(file: File): Promise<void>;
   selectFilter(filter: PublicFilter): Promise<void>;
+  requestThumbnails(filters: ReadonlyArray<PublicFilter>): void;
   setIntensity(value: number): void;
   exportImage(options: ExportOptions): Promise<Uint8Array>;
   reset(): Promise<void>;
@@ -103,6 +105,7 @@ export function useImageSession(
   const [image, setImage] = useState<WorkerLoadedImage | null>(null);
   const [fileName, setFileName] = useState('');
   const [selectedFilter, setSelectedFilter] = useState<PublicFilter | null>(null);
+  const [pendingFilter, setPendingFilter] = useState<PublicFilter | null>(null);
   const [intensity, setIntensityState] = useState(1);
   const [originalPreview, setOriginalPreview] = useState<PixelBuffer | null>(null);
   const [filteredPreview, setFilteredPreview] = useState<PixelBuffer | null>(null);
@@ -142,6 +145,7 @@ export function useImageSession(
         renderedIntensityRef.current = nextIntensity;
         selectedRef.current = filter;
         setSelectedFilter(filter);
+        setPendingFilter(null);
         intensityRef.current = nextIntensity;
         setIntensityState(nextIntensity);
       }
@@ -151,6 +155,7 @@ export function useImageSession(
         setSelectedFilter(renderedFilterRef.current);
         intensityRef.current = renderedIntensityRef.current;
         setIntensityState(renderedIntensityRef.current);
+        setPendingFilter(null);
         setError(userError(renderError, 'render'));
       }
     } finally {
@@ -192,6 +197,7 @@ export function useImageSession(
     setImage(null);
     setFileName('');
     setSelectedFilter(null);
+    setPendingFilter(null);
     setIntensityState(1);
     setOriginalPreview(null);
     setFilteredPreview(null);
@@ -238,6 +244,7 @@ export function useImageSession(
       setFileName(file.name);
       selectedRef.current = null;
       setSelectedFilter(null);
+      setPendingFilter(null);
       intensityRef.current = 1;
       setIntensityState(1);
       renderedFilterRef.current = null;
@@ -256,10 +263,13 @@ export function useImageSession(
   }, [generateThumbnails, getEngine, updateProgress]);
 
   const selectFilter = useCallback(async (filter: PublicFilter): Promise<void> => {
-    selectedRef.current = filter;
-    setSelectedFilter(filter);
+    setPendingFilter(filter);
     await renderSelected(filter, intensityRef.current);
   }, [renderSelected]);
+
+  const requestThumbnails = useCallback((_requestedFilters: ReadonlyArray<PublicFilter>): void => {
+    // The incremental scheduler will consume the visible filters in the next task.
+  }, []);
 
   const setIntensity = useCallback((value: number): void => {
     const next = Math.min(1, Math.max(0, value));
@@ -306,6 +316,7 @@ export function useImageSession(
     image,
     fileName,
     selectedFilter,
+    pendingFilter,
     intensity,
     originalPreview,
     filteredPreview,
@@ -318,6 +329,7 @@ export function useImageSession(
     fallbackNotice,
     load,
     selectFilter,
+    requestThumbnails,
     setIntensity,
     exportImage,
     reset,

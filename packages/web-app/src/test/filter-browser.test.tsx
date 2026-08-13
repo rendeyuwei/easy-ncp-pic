@@ -38,8 +38,10 @@ describe('FilterBrowser', () => {
       <FilterBrowser
         categories={categories}
         selectedFilterId={null}
+        pendingFilterId={null}
         thumbnails={new Map()}
         loadingIds={new Set()}
+        onVisibleFiltersChange={vi.fn()}
         onSelect={vi.fn()}
       />,
     );
@@ -64,8 +66,10 @@ describe('FilterBrowser', () => {
       <FilterBrowser
         categories={categories}
         selectedFilterId={filmFilter.id}
+        pendingFilterId={null}
         thumbnails={new Map()}
         loadingIds={new Set()}
+        onVisibleFiltersChange={vi.fn()}
         onSelect={onSelect}
       />,
     );
@@ -83,8 +87,10 @@ describe('FilterBrowser', () => {
       <FilterBrowser
         categories={categories}
         selectedFilterId={null}
+        pendingFilterId={null}
         thumbnails={new Map([[filmFilter.id, thumbnail]])}
         loadingIds={new Set([monoFilter.id])}
+        onVisibleFiltersChange={vi.fn()}
         onSelect={vi.fn()}
       />,
     );
@@ -99,8 +105,10 @@ describe('FilterBrowser', () => {
       <FilterBrowser
         categories={categories}
         selectedFilterId={null}
+        pendingFilterId={null}
         thumbnails={new Map()}
         loadingIds={new Set([monoFilter.id])}
+        onVisibleFiltersChange={vi.fn()}
         onSelect={vi.fn()}
       />,
     );
@@ -115,12 +123,39 @@ describe('FilterBrowser', () => {
       <FilterBrowser
         categories={[]}
         selectedFilterId={null}
+        pendingFilterId={null}
         thumbnails={new Map()}
         loadingIds={new Set()}
+        onVisibleFiltersChange={vi.fn()}
         onSelect={vi.fn()}
       />,
     );
 
     expect(screen.getByText('暂无可用滤镜')).toBeInTheDocument();
+  });
+
+  it('reports active-category filters and distinguishes pending work from the committed filter', async () => {
+    const user = userEvent.setup();
+    const onVisibleFiltersChange = vi.fn();
+    render(
+      <FilterBrowser
+        categories={categories}
+        selectedFilterId={filmFilter.id}
+        pendingFilterId={monoFilter.id}
+        thumbnails={new Map()}
+        loadingIds={new Set()}
+        onVisibleFiltersChange={onVisibleFiltersChange}
+        onSelect={vi.fn()}
+      />,
+    );
+
+    expect(onVisibleFiltersChange).toHaveBeenCalledWith(categories[0].filters);
+    expect(screen.getByRole('button', { name: /Fuji Astia/ })).toHaveAttribute('aria-pressed', 'true');
+
+    await user.click(screen.getByRole('tab', { name: '黑白 1' }));
+
+    expect(onVisibleFiltersChange).toHaveBeenLastCalledWith(categories[1].filters);
+    expect(screen.getByRole('button', { name: /Deep Mono/ })).toHaveAttribute('aria-busy', 'true');
+    expect(screen.getByText('正在应用')).toBeInTheDocument();
   });
 });

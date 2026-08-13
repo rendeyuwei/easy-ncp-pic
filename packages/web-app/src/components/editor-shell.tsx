@@ -88,6 +88,7 @@ export function EditorShell({
             {filtersUnavailable ? <p>滤镜列表暂时无法更新，请稍后重试。</p> : null}
             {session.fallbackNotice ? <p>{session.fallbackNotice}</p> : null}
             {session.error ? <p role="alert">{session.error}</p> : null}
+            {session.pendingFilter ? <p role="status">正在应用 {session.pendingFilter.displayName}…</p> : null}
             {session.busy && !exportOpen ? <p role="status">正在处理照片…</p> : null}
           </div>
         </section>
@@ -96,8 +97,10 @@ export function EditorShell({
           <FilterBrowser
             categories={categories}
             selectedFilterId={session.selectedFilter?.id ?? null}
+            pendingFilterId={session.pendingFilter?.id ?? null}
             thumbnails={session.thumbnails}
             loadingIds={session.thumbnailLoading}
+            onVisibleFiltersChange={session.requestThumbnails}
             onSelect={(filter) => void session.selectFilter(filter)}
           />
         </aside>

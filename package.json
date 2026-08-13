@@ -5,6 +5,8 @@
   "packageManager": "pnpm@9.12.1",
   "engines": { "node": ">=20.19.0 <21 || >=22.12.0" },
   "scripts": {
+    "dev": "bash ./scripts/dev.sh",
+    "test:dev-script": "bash ./scripts/dev.test.sh",
     "test": "pnpm -r test"
   }
 }

@@ -254,22 +254,143 @@ describe('useImageSession', () => {
     expect(result.current.filteredPreview).toEqual(newer);
   });
 
-  it('generates thumbnails when filters arrive after the photo loads', async () => {
-    const engine = fakeEngine();
-    const filters = parsePublicFilters(publicFiltersFixture).categories[0].filters;
-    const { result, rerender } = renderHook(
-      ({ available }) => useImageSession(available, () => engine),
-      { initialProps: { available: [] as typeof filters } },
-    );
-    await act(() => result.current.load(
-      new File([new Uint8Array([1])], 'early.png', { type: 'image/png' }),
-    ));
+  it('renders requested thumbnails one at a time in FIFO order', async () => {
+    const first = deferred<PixelBuffer>();
+    const second = deferred<PixelBuffer>();
+    const third = deferred<PixelBuffer>();
+    const engine = fakeEngine({
+      renderThumbnail: vi.fn()
+        .mockImplementationOnce(() => first.promise)
+        .mockImplementationOnce(() => second.promise)
+        .mockImplementationOnce(() => third.promise),
+    });
+    const filters = parsePublicFilters({
+      categories: [{ ...publicFiltersFixture.categories[0], filters: [
+        publicFiltersFixture.categories[0].filters[0],
+        { ...publicFiltersFixture.categories[0].filters[0], id: 'filter-2', displayName: 'Second' },
+        { ...publicFiltersFixture.categories[0].filters[0], id: 'filter-3', displayName: 'Third' },
+      ] }],
+    }).categories[0].filters;
+    const { result } = renderHook(() => useImageSession(filters, () => engine));
+    await act(() => result.current.load(new File([new Uint8Array([1])], 'p.png', { type: 'image/png' })));
+
     expect(engine.renderThumbnail).not.toHaveBeenCalled();
-
-    rerender({ available: filters });
-
-    await waitFor(() => expect(result.current.thumbnails.has(filters[0].id)).toBe(true));
+    act(() => result.current.requestThumbnails(filters));
     expect(engine.renderThumbnail).toHaveBeenCalledOnce();
+
+    await act(async () => { first.resolve(original); await first.promise; });
+    await waitFor(() => expect(engine.renderThumbnail).toHaveBeenCalledTimes(2));
+    expect(engine.renderThumbnail).toHaveBeenNthCalledWith(2, loaded, expect.any(Object), 96);
+
+    await act(async () => { second.resolve(newer); await second.promise; });
+    await waitFor(() => expect(engine.renderThumbnail).toHaveBeenCalledTimes(3));
+    await act(async () => { third.resolve(older); await third.promise; });
+    await waitFor(() => expect(result.current.thumbnailLoading.size).toBe(0));
+
+    expect([...result.current.thumbnails.keys()]).toEqual(filters.map((filter) => filter.id));
+  });
+
+  it('deduplicates queued, running, and cached thumbnail requests', async () => {
+    const pending = deferred<PixelBuffer>();
+    const engine = fakeEngine({ renderThumbnail: vi.fn(() => pending.promise) });
+    const filters = parsePublicFilters(publicFiltersFixture).categories[0].filters;
+    const { result } = renderHook(() => useImageSession(filters, () => engine));
+    await act(() => result.current.load(new File([new Uint8Array([1])], 'p.png', { type: 'image/png' })));
+
+    act(() => {
+      result.current.requestThumbnails([filters[0], filters[0]]);
+      result.current.requestThumbnails(filters);
+    });
+    expect(engine.renderThumbnail).toHaveBeenCalledOnce();
+
+    await act(async () => { pending.resolve(original); await pending.promise; });
+    await waitFor(() => expect(result.current.thumbnails.has(filters[0].id)).toBe(true));
+    act(() => result.current.requestThumbnails(filters));
+
+    expect(engine.renderThumbnail).toHaveBeenCalledOnce();
+  });
+
+  it('discards pending thumbnails and queued work when a replacement photo loads', async () => {
+    const pending = deferred<PixelBuffer>();
+    const replacement = { ...loaded, id: 'replacement-image' };
+    const engine = fakeEngine({
+      load: vi.fn()
+        .mockResolvedValueOnce(loaded)
+        .mockResolvedValueOnce(replacement),
+      renderThumbnail: vi.fn()
+        .mockImplementationOnce(() => pending.promise)
+        .mockResolvedValueOnce(newer),
+    });
+    const filters = parsePublicFilters({
+      categories: [{ ...publicFiltersFixture.categories[0], filters: [
+        publicFiltersFixture.categories[0].filters[0],
+        { ...publicFiltersFixture.categories[0].filters[0], id: 'filter-2', displayName: 'Second' },
+      ] }],
+    }).categories[0].filters;
+    const { result } = renderHook(() => useImageSession(filters, () => engine));
+    await act(() => result.current.load(new File([new Uint8Array([1])], 'first.png', { type: 'image/png' })));
+    act(() => result.current.requestThumbnails(filters));
+    expect(engine.renderThumbnail).toHaveBeenCalledOnce();
+
+    await act(() => result.current.load(
+      new File([new Uint8Array([2])], 'replacement.png', { type: 'image/png' }),
+    ));
+    await act(async () => { pending.resolve(older); await pending.promise; });
+
+    expect(result.current.image).toEqual(replacement);
+    expect(result.current.thumbnails.size).toBe(0);
+    expect(result.current.thumbnailLoading.size).toBe(0);
+    expect(engine.renderThumbnail).toHaveBeenCalledOnce();
+
+    act(() => result.current.requestThumbnails([filters[0]]));
+    await waitFor(() => expect(result.current.thumbnails.get(filters[0].id)).toEqual(newer));
+    expect(engine.renderThumbnail).toHaveBeenLastCalledWith(replacement, expect.any(Object), 96);
+  });
+
+  it('lets a user preview enter the worker queue between thumbnail items', async () => {
+    const firstThumbnail = deferred<PixelBuffer>();
+    const secondThumbnail = deferred<PixelBuffer>();
+    const preview = deferred<PixelBuffer>();
+    const submissions: string[] = [];
+    const engine = fakeEngine({
+      renderPreview: vi.fn()
+        .mockResolvedValueOnce(original)
+        .mockImplementationOnce(() => {
+          submissions.push('preview');
+          return preview.promise;
+        }),
+      renderThumbnail: vi.fn()
+        .mockImplementationOnce(() => {
+          submissions.push('thumbnail-1');
+          return firstThumbnail.promise;
+        })
+        .mockImplementationOnce(() => {
+          submissions.push('thumbnail-2');
+          return secondThumbnail.promise;
+        }),
+    });
+    const filters = parsePublicFilters({
+      categories: [{ ...publicFiltersFixture.categories[0], filters: [
+        publicFiltersFixture.categories[0].filters[0],
+        { ...publicFiltersFixture.categories[0].filters[0], id: 'filter-2', displayName: 'Second' },
+      ] }],
+    }).categories[0].filters;
+    const { result } = renderHook(() => useImageSession(filters, () => engine));
+    await act(() => result.current.load(new File([new Uint8Array([1])], 'p.png', { type: 'image/png' })));
+    act(() => result.current.requestThumbnails(filters));
+
+    await act(async () => { firstThumbnail.resolve(original); await firstThumbnail.promise; });
+    let previewRequest!: Promise<void>;
+    act(() => { previewRequest = result.current.selectFilter(filters[1]); });
+
+    expect(submissions).toEqual(['thumbnail-1', 'preview']);
+    expect(result.current.pendingFilter?.id).toBe(filters[1].id);
+    await waitFor(() => expect(submissions).toEqual(['thumbnail-1', 'preview', 'thumbnail-2']));
+
+    await act(async () => { preview.resolve(newer); await previewRequest; });
+    await act(async () => { secondThumbnail.resolve(older); await secondThumbnail.promise; });
+    expect(result.current.selectedFilter?.id).toBe(filters[1].id);
+    expect(result.current.filteredPreview).toEqual(newer);
   });
 
   it('clamps intensity and preserves editor state when export rejects', async () => {

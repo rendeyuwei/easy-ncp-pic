@@ -101,6 +101,10 @@ export function useImageSession(
   const renderedIntensityRef = useRef(1);
   const loadToken = useRef(0);
   const renderToken = useRef(0);
+  const thumbnailGeneration = useRef(0);
+  const thumbnailQueue = useRef<PublicFilter[]>([]);
+  const thumbnailQueuedIds = useRef(new Set<string>());
+  const thumbnailRunning = useRef(false);
 
   const [image, setImage] = useState<WorkerLoadedImage | null>(null);
   const [fileName, setFileName] = useState('');
@@ -163,31 +167,53 @@ export function useImageSession(
     }
   }, [getEngine, updateProgress]);
 
-  const generateThumbnails = useCallback(async (activeImage: WorkerLoadedImage): Promise<void> => {
-    const engine = getEngine();
-    const ids = new Set(filters.map((filter) => filter.id));
-    setThumbnailLoading(ids);
-    const results = await Promise.allSettled(
-      filters.map(async (filter) => ({
-        id: filter.id,
-        pixels: await engine.renderThumbnail(activeImage, toFilterParams(filter), 96),
-      })),
-    );
-    if (imageRef.current?.id !== activeImage.id) return;
-    const next = new Map<string, PixelBuffer>();
-    for (const result of results) if (result.status === 'fulfilled') next.set(result.value.id, result.value.pixels);
-    setThumbnails(next);
-    setThumbnailLoading(new Set());
-  }, [filters, getEngine]);
+  const pumpThumbnails = useCallback(async (): Promise<void> => {
+    if (thumbnailRunning.current) return;
+    thumbnailRunning.current = true;
+    try {
+      while (true) {
+        const filter = thumbnailQueue.current.shift();
+        const activeImage = imageRef.current;
+        if (!filter || !activeImage) return;
+        const generation = thumbnailGeneration.current;
+        let cached = false;
+        try {
+          const pixels = await getEngine().renderThumbnail(activeImage, toFilterParams(filter), 96);
+          if (generation === thumbnailGeneration.current && imageRef.current?.id === activeImage.id) {
+            cached = true;
+            setThumbnails((current) => {
+              const next = new Map(current);
+              next.set(filter.id, pixels);
+              return next;
+            });
+          }
+        } catch {
+          // A failed thumbnail leaves the filter available for a later retry.
+        } finally {
+          if (generation === thumbnailGeneration.current) {
+            if (!cached) thumbnailQueuedIds.current.delete(filter.id);
+            setThumbnailLoading((current) => {
+              if (!current.has(filter.id)) return current;
+              const next = new Set(current);
+              next.delete(filter.id);
+              return next;
+            });
+          }
+        }
 
-  useEffect(() => {
-    const active = imageRef.current;
-    if (active && filters.length > 0) void generateThumbnails(active);
-  }, [filters, generateThumbnails]);
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      }
+    } finally {
+      thumbnailRunning.current = false;
+    }
+  }, [getEngine]);
 
   const reset = useCallback(async (): Promise<void> => {
     loadToken.current++;
     renderToken.current++;
+    thumbnailGeneration.current++;
+    thumbnailQueue.current = [];
+    thumbnailQueuedIds.current.clear();
     const active = imageRef.current;
     imageRef.current = null;
     selectedRef.current = null;
@@ -217,7 +243,12 @@ export function useImageSession(
     }
     const token = ++loadToken.current;
     renderToken.current++;
+    thumbnailGeneration.current++;
+    thumbnailQueue.current = [];
+    thumbnailQueuedIds.current.clear();
     setPendingFilter(null);
+    setThumbnails(new Map());
+    setThumbnailLoading(new Set());
     setBusy(true);
     setError(null);
     setProgress(0);
@@ -253,7 +284,6 @@ export function useImageSession(
       setOriginalPreview(preview);
       setFilteredPreview(preview);
       setProgress(1);
-      void generateThumbnails(loaded);
       if (previous && previous.id !== loaded.id) await engine.disposeImage(previous);
     } catch (loadError) {
       if (token === loadToken.current) setError(userError(loadError, 'load'));
@@ -261,16 +291,30 @@ export function useImageSession(
       if (loaded && !committed && engine) await engine.disposeImage(loaded).catch(() => undefined);
       if (token === loadToken.current) setBusy(false);
     }
-  }, [generateThumbnails, getEngine, updateProgress]);
+  }, [getEngine, updateProgress]);
 
   const selectFilter = useCallback(async (filter: PublicFilter): Promise<void> => {
     setPendingFilter(filter);
     await renderSelected(filter, intensityRef.current);
   }, [renderSelected]);
 
-  const requestThumbnails = useCallback((_requestedFilters: ReadonlyArray<PublicFilter>): void => {
-    // The incremental scheduler will consume the visible filters in the next task.
-  }, []);
+  const requestThumbnails = useCallback((requestedFilters: ReadonlyArray<PublicFilter>): void => {
+    if (!imageRef.current) return;
+    const addedIds: string[] = [];
+    for (const filter of requestedFilters) {
+      if (thumbnailQueuedIds.current.has(filter.id)) continue;
+      thumbnailQueuedIds.current.add(filter.id);
+      thumbnailQueue.current.push(filter);
+      addedIds.push(filter.id);
+    }
+    if (addedIds.length === 0) return;
+    setThumbnailLoading((current) => {
+      const next = new Set(current);
+      for (const id of addedIds) next.add(id);
+      return next;
+    });
+    void pumpThumbnails();
+  }, [image, pumpThumbnails]);
 
   const setIntensity = useCallback((value: number): void => {
     const next = Math.min(1, Math.max(0, value));
@@ -305,6 +349,9 @@ export function useImageSession(
   useEffect(() => () => {
     loadToken.current++;
     renderToken.current++;
+    thumbnailGeneration.current++;
+    thumbnailQueue.current = [];
+    thumbnailQueuedIds.current.clear();
     const active = imageRef.current;
     const engine = engineRef.current;
     imageRef.current = null;

@@ -4,7 +4,7 @@
 
 **Your photo. Your look. Your browser.**
 
-Turn an ordinary JPG or PNG into an image with character—without handing the original to a remote photo editor. Open one photo, explore curated looks, compare every detail, tune the intensity, and export at the original dimensions. EasyPic keeps the creative flow simple and your photo where it belongs: with you.
+EasyPic is a browser-based photo tool built specifically around Nikon Picture Control (`.ncp`) filters. Every published look is derived from real NCP data—not a grab bag of generic presets. Open a JPG or PNG, explore distinctive NCP looks, compare every detail, tune the intensity, and export at the original dimensions—all without handing your photo to a remote editor.
 
 > Ready to see what your photo could become? [Run EasyPic locally](#try-it-locally) and start exploring in a few minutes.
 
@@ -12,7 +12,7 @@ Turn an ordinary JPG or PNG into an image with character—without handing the o
 
 Your photo is decoded, previewed, filtered, and exported inside the browser. It is **not uploaded to the EasyPic server**. The server only delivers the application and published filter parameters, so you can experiment freely without sending personal images across the network.
 
-EasyPic turns Nikon Picture Control (`.ncp`) data into approachable, browser-ready looks. It is an independent project and does not claim pixel-identical output with Nikon software.
+EasyPic focuses on making NCP Picture Controls easy to experience outside a traditional desktop workflow. It is an independent project and does not claim affiliation with Nikon or pixel-identical output with Nikon software.
 
 ## What You Can Do
 
@@ -32,16 +32,31 @@ You need [Node.js](https://nodejs.org/) `>=20.19.0 <21` or `>=22.12.0` and pnpm 
 git clone https://github.com/rendeyuwei/easypic.git
 cd easypic
 pnpm install
-cp .env.local.example .env.local
+pnpm -r build
+mkdir -p .data
 ```
 
-Open `.env.local` and replace the example session secret and administrator password with local values, then start the complete stack:
+Start the API in the first terminal. Replace the example secrets before using this setup beyond local development:
 
 ```bash
-pnpm dev
+EASYPIC_DB=.data/easypic.sqlite \
+EASYPIC_SESSION_SECRET=local-development-secret \
+EASYPIC_ADMIN_PASSWORD=local-admin-password \
+EASYPIC_COOKIE_SECURE=false \
+pnpm --filter @easypic/api-server start
 ```
 
-The launcher builds the internal libraries and starts the API, public editor, and administration app together. Press `Ctrl+C` to stop them.
+Then start the public editor and administration app in two more terminals:
+
+```bash
+pnpm --filter @easypic/web-app dev -- --host 127.0.0.1 --port 5173
+```
+
+```bash
+pnpm --filter @easypic/admin-app dev -- --host 127.0.0.1 --port 5174
+```
+
+Sign in to the administration app as `admin` with the password set in `EASYPIC_ADMIN_PASSWORD`. Press `Ctrl+C` in each terminal to stop the services.
 
 ## Local Services
 
@@ -77,15 +92,12 @@ Run these commands from the repository root:
 
 ```bash
 pnpm test                                      # all Vitest suites
-pnpm test:dev-script                           # local launcher checks
 pnpm -r build                                  # build every workspace package
 pnpm -r typecheck                              # strict TypeScript checks
 pnpm --filter @easypic/web-app test:e2e        # public editor Playwright suite
 pnpm --filter @easypic/admin-app test:e2e      # administration Playwright suite
 pnpm --filter @easypic/image-engine test:browser # browser renderer checks
 ```
-
-See [AGENTS.md](AGENTS.md) for repository conventions and contribution checks.
 
 ## Current Scope
 

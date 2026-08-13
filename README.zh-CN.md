@@ -4,7 +4,7 @@
 
 **你的照片，你的质感，只在你的浏览器里完成。**
 
-无需把原片交给远端修图服务，也能让一张普通的 JPG 或 PNG 拥有鲜明气质。打开照片、探索精选风格、对比每处细节、调节滤镜强度，再以原始像素尺寸导出。EasyPic 把创作过程变得轻松，也让照片始终留在你手中。
+EasyPic 是一个专注于 Nikon Picture Control（`.ncp`）滤镜的浏览器照片工具。这里的每一种已发布风格都来自真实的 NCP 数据，而不是随意拼出的通用滤镜预设。打开一张 JPG 或 PNG，探索独特的 NCP 质感、对比每处细节、调节滤镜强度，再以原始像素尺寸导出——整个过程无需把照片交给远端修图服务。
 
 > 想看看这张照片还能呈现怎样的感觉？[在本地运行 EasyPic](#本地体验)，几分钟后就能开始探索。
 
@@ -12,7 +12,7 @@
 
 照片的解码、预览、滤镜处理和导出都在浏览器内完成，**不会上传到 EasyPic 服务器**。服务器只负责提供应用与已发布的滤镜参数，你可以放心尝试不同风格，无需把私人照片发送到网络另一端。
 
-EasyPic 将 Nikon Picture Control（`.ncp`）数据转化为直观、易用的浏览器滤镜。这是一个独立项目，不承诺与 Nikon 软件的处理结果逐像素一致。
+EasyPic 专注于让 NCP Picture Control 摆脱传统桌面工作流的限制，变得更容易体验和使用。这是一个独立项目，与 Nikon 不存在隶属或合作关系，也不承诺与 Nikon 软件的处理结果逐像素一致。
 
 ## 你可以做什么
 
@@ -32,16 +32,31 @@ EasyPic 将 Nikon Picture Control（`.ncp`）数据转化为直观、易用的�
 git clone https://github.com/rendeyuwei/easypic.git
 cd easypic
 pnpm install
-cp .env.local.example .env.local
+pnpm -r build
+mkdir -p .data
 ```
 
-打开 `.env.local`，将示例会话密钥和管理员密码替换为仅用于本地开发的值，然后启动完整服务：
+在第一个终端启动 API。若不只用于本地开发，请先替换下面的示例密钥：
 
 ```bash
-pnpm dev
+EASYPIC_DB=.data/easypic.sqlite \
+EASYPIC_SESSION_SECRET=local-development-secret \
+EASYPIC_ADMIN_PASSWORD=local-admin-password \
+EASYPIC_COOKIE_SECURE=false \
+pnpm --filter @easypic/api-server start
 ```
 
-启动脚本会构建内部依赖，并同时运行 API、公开编辑器与管理后台。按 `Ctrl+C` 即可全部停止。
+然后在另外两个终端分别启动公开编辑器和管理后台：
+
+```bash
+pnpm --filter @easypic/web-app dev -- --host 127.0.0.1 --port 5173
+```
+
+```bash
+pnpm --filter @easypic/admin-app dev -- --host 127.0.0.1 --port 5174
+```
+
+使用用户名 `admin` 和 `EASYPIC_ADMIN_PASSWORD` 中设置的密码登录管理后台。需要停止服务时，请在三个终端中分别按 `Ctrl+C`。
 
 ## 本地服务
 
@@ -77,15 +92,12 @@ EasyPic 是一个 pnpm TypeScript monorepo，由职责清晰的包组成：
 
 ```bash
 pnpm test                                      # 运行全部 Vitest 测试
-pnpm test:dev-script                           # 检查本地启动脚本
 pnpm -r build                                  # 构建所有工作区包
 pnpm -r typecheck                              # 执行严格 TypeScript 检查
 pnpm --filter @easypic/web-app test:e2e        # 运行公开编辑器 Playwright 测试
 pnpm --filter @easypic/admin-app test:e2e      # 运行管理后台 Playwright 测试
 pnpm --filter @easypic/image-engine test:browser # 检查浏览器渲染路径
 ```
-
-仓库约定和提交前检查请参阅 [AGENTS.md](AGENTS.md)。
 
 ## 当前范围
 

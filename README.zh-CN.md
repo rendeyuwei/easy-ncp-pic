@@ -32,31 +32,16 @@ EasyPic 专注于让 NCP Picture Control 摆脱传统桌面工作流的限制，
 git clone https://github.com/rendeyuwei/easypic.git
 cd easypic
 pnpm install
-pnpm -r build
-mkdir -p .data
+cp .env.local.example .env.local
 ```
 
-在第一个终端启动 API。若不只用于本地开发，请先替换下面的示例密钥：
+打开 `.env.local`，将示例会话密钥和管理员密码替换为仅用于本地开发的值，然后启动完整服务：
 
 ```bash
-EASYPIC_DB=.data/easypic.sqlite \
-EASYPIC_SESSION_SECRET=local-development-secret \
-EASYPIC_ADMIN_PASSWORD=local-admin-password \
-EASYPIC_COOKIE_SECURE=false \
-pnpm --filter @easypic/api-server start
+pnpm dev
 ```
 
-然后在另外两个终端分别启动公开编辑器和管理后台：
-
-```bash
-pnpm --filter @easypic/web-app dev -- --host 127.0.0.1 --port 5173
-```
-
-```bash
-pnpm --filter @easypic/admin-app dev -- --host 127.0.0.1 --port 5174
-```
-
-使用用户名 `admin` 和 `EASYPIC_ADMIN_PASSWORD` 中设置的密码登录管理后台。需要停止服务时，请在三个终端中分别按 `Ctrl+C`。
+启动脚本会构建内部依赖，并同时运行 API、公开编辑器与管理后台。按 `Ctrl+C` 即可全部停止。
 
 ## 本地服务
 
@@ -92,12 +77,15 @@ EasyPic 是一个 pnpm TypeScript monorepo，由职责清晰的包组成：
 
 ```bash
 pnpm test                                      # 运行全部 Vitest 测试
+pnpm test:dev-script                           # 检查本地启动脚本
 pnpm -r build                                  # 构建所有工作区包
 pnpm -r typecheck                              # 执行严格 TypeScript 检查
 pnpm --filter @easypic/web-app test:e2e        # 运行公开编辑器 Playwright 测试
 pnpm --filter @easypic/admin-app test:e2e      # 运行管理后台 Playwright 测试
 pnpm --filter @easypic/image-engine test:browser # 检查浏览器渲染路径
 ```
+
+仓库约定和提交前检查请参阅 [AGENTS.md](AGENTS.md)。
 
 ## 当前范围
 

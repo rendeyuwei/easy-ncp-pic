@@ -32,31 +32,16 @@ You need [Node.js](https://nodejs.org/) `>=20.19.0 <21` or `>=22.12.0` and pnpm 
 git clone https://github.com/rendeyuwei/easypic.git
 cd easypic
 pnpm install
-pnpm -r build
-mkdir -p .data
+cp .env.local.example .env.local
 ```
 
-Start the API in the first terminal. Replace the example secrets before using this setup beyond local development:
+Open `.env.local` and replace the example session secret and administrator password with local values, then start the complete stack:
 
 ```bash
-EASYPIC_DB=.data/easypic.sqlite \
-EASYPIC_SESSION_SECRET=local-development-secret \
-EASYPIC_ADMIN_PASSWORD=local-admin-password \
-EASYPIC_COOKIE_SECURE=false \
-pnpm --filter @easypic/api-server start
+pnpm dev
 ```
 
-Then start the public editor and administration app in two more terminals:
-
-```bash
-pnpm --filter @easypic/web-app dev -- --host 127.0.0.1 --port 5173
-```
-
-```bash
-pnpm --filter @easypic/admin-app dev -- --host 127.0.0.1 --port 5174
-```
-
-Sign in to the administration app as `admin` with the password set in `EASYPIC_ADMIN_PASSWORD`. Press `Ctrl+C` in each terminal to stop the services.
+The launcher builds the internal libraries and starts the API, public editor, and administration app together. Press `Ctrl+C` to stop them.
 
 ## Local Services
 
@@ -92,12 +77,15 @@ Run these commands from the repository root:
 
 ```bash
 pnpm test                                      # all Vitest suites
+pnpm test:dev-script                           # local launcher checks
 pnpm -r build                                  # build every workspace package
 pnpm -r typecheck                              # strict TypeScript checks
 pnpm --filter @easypic/web-app test:e2e        # public editor Playwright suite
 pnpm --filter @easypic/admin-app test:e2e      # administration Playwright suite
 pnpm --filter @easypic/image-engine test:browser # browser renderer checks
 ```
+
+See [AGENTS.md](AGENTS.md) for repository conventions and contribution checks.
 
 ## Current Scope
 

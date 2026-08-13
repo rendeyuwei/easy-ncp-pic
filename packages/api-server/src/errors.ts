@@ -7,6 +7,7 @@ export type ApiErrorCode =
   | 'CSRF_INVALID'
   | 'NOT_FOUND'
   | 'DUPLICATE_NCP'
+  | 'SLUG_CONFLICT'
   | 'INVALID_NCP'
   | 'UNSUPPORTED_NCP'
   | 'CATEGORY_IN_USE'

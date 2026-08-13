@@ -57,7 +57,17 @@ export function registerAdminAuthRoutes(app: FastifyInstance, ctx: AppContext, h
         sameSite: 'lax',
         expires: new Date(created.expiresAt),
       });
+      reply.header('cache-control', 'no-store');
       return reply.code(200).send({ csrfToken: created.csrfToken });
+    },
+  );
+
+  app.get(
+    '/api/admin/session',
+    { preHandler: [hooks.requireAuth] },
+    async (req, reply) => {
+      reply.header('cache-control', 'no-store');
+      return { csrfToken: req.session!.csrfSecret };
     },
   );
 

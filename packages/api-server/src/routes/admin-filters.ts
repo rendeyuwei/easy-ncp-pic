@@ -4,6 +4,7 @@ import { parseNcp, NcpParseError } from '@easypic/ncp-parser';
 import type { AppContext } from '../app';
 import type { AuthHooks } from '../auth/hooks';
 import { ApiError } from '../errors';
+import { mapAdminConstraint, normalizeAdminBody, SLUG_PATTERN } from './admin-input';
 
 export const MAX_NCP_BYTES = 64 * 1024;
 
@@ -18,6 +19,7 @@ export function registerAdminFilterRoutes(app: FastifyInstance, ctx: AppContext,
     '/api/admin/filters',
     {
       preHandler: [hooks.requireAuth, hooks.requireCsrf],
+      preValidation: normalizeAdminBody('filter-create'),
       bodyLimit: MAX_NCP_BYTES,
       schema: {
         body: {
@@ -25,10 +27,10 @@ export function registerAdminFilterRoutes(app: FastifyInstance, ctx: AppContext,
           required: ['ncpBase64', 'displayName', 'categoryId'],
           properties: {
             ncpBase64: { type: 'string' },
-            displayName: { type: 'string' },
+            displayName: { type: 'string', minLength: 1, maxLength: 100 },
             categoryId: { type: 'string' },
-            description: { type: 'string' },
-            slug: { type: 'string' },
+            description: { type: 'string', maxLength: 500 },
+            slug: { type: 'string', minLength: 1, maxLength: 60, pattern: SLUG_PATTERN },
             sortOrder: { type: 'integer' },
             isEnabled: { type: 'boolean' },
           },
@@ -82,25 +84,8 @@ export function registerAdminFilterRoutes(app: FastifyInstance, ctx: AppContext,
         });
         return reply.code(201).send({ filter });
       } catch (e) {
-        const err = e as { code?: string; message?: string };
-        if (err.code?.includes('SQLITE_CONSTRAINT')) {
-          // better-sqlite3 names the offending column in the message, e.g.
-          // "UNIQUE constraint failed: filters.ncp_sha256". Discriminate so a genuine
-          // duplicate isn't misreported as a bad category, and a slug collision isn't
-          // reported as 'Invalid category'.
-          const message = err.message ?? '';
-          if (err.code === 'SQLITE_CONSTRAINT_FOREIGNKEY') {
-            // category_id does not reference an existing category.
-            throw new ApiError(400, 'VALIDATION_ERROR', 'Invalid category');
-          }
-          if (message.includes('ncp_sha256')) {
-            // The pre-check passed but a concurrent write inserted the same NCP.
-            throw new ApiError(409, 'DUPLICATE_NCP', 'This Picture Control is already published');
-          }
-          if (message.includes('slug')) {
-            throw new ApiError(409, 'DUPLICATE_NCP', 'A filter with this slug already exists');
-          }
-        }
+        const mapped = mapAdminConstraint(e);
+        if (mapped) throw mapped;
         throw e;
       }
     },
@@ -110,14 +95,16 @@ export function registerAdminFilterRoutes(app: FastifyInstance, ctx: AppContext,
     '/api/admin/filters/:id',
     {
       preHandler: [hooks.requireAuth, hooks.requireCsrf],
+      preValidation: normalizeAdminBody('filter-patch'),
       schema: {
         body: {
           type: 'object',
+          minProperties: 1,
           properties: {
-            displayName: { type: 'string' },
-            description: { type: 'string' },
+            displayName: { type: 'string', minLength: 1, maxLength: 100 },
+            description: { type: 'string', maxLength: 500 },
             categoryId: { type: 'string' },
-            slug: { type: 'string' },
+            slug: { type: 'string', minLength: 1, maxLength: 60, pattern: SLUG_PATTERN },
             sortOrder: { type: 'integer' },
             isEnabled: { type: 'boolean' },
           },
@@ -128,7 +115,14 @@ export function registerAdminFilterRoutes(app: FastifyInstance, ctx: AppContext,
     async (req, reply) => {
       const { id } = req.params as { id: string };
       const b = req.body as { displayName?: string; description?: string; categoryId?: string; slug?: string; sortOrder?: number; isEnabled?: boolean };
-      const filter = filters.update(id, b);
+      let filter;
+      try {
+        filter = filters.update(id, b);
+      } catch (e) {
+        const mapped = mapAdminConstraint(e);
+        if (mapped) throw mapped;
+        throw e;
+      }
       if (!filter) throw new ApiError(404, 'NOT_FOUND', 'Filter not found');
       return { filter };
     },

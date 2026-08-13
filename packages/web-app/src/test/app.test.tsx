@@ -92,14 +92,14 @@ describe('App editor integration', () => {
     const compare = screen.getByRole('button', { name: '按住看原图' });
 
     fireEvent.pointerDown(compare);
-    expect(screen.getByTestId('filtered-layer')).toHaveStyle({ clipPath: 'inset(0 100% 0 0)' });
+    expect(screen.getByTestId('filtered-layer')).toHaveStyle({ clipPath: 'inset(0 0 0 100%)' });
     fireEvent.pointerUp(compare);
-    expect(screen.getByTestId('filtered-layer')).toHaveStyle({ clipPath: 'inset(0 50% 0 0)' });
+    expect(screen.getByTestId('filtered-layer')).toHaveStyle({ clipPath: 'inset(0 0 0 50%)' });
 
     fireEvent.keyDown(compare, { key: ' ' });
-    expect(screen.getByTestId('filtered-layer')).toHaveStyle({ clipPath: 'inset(0 100% 0 0)' });
+    expect(screen.getByTestId('filtered-layer')).toHaveStyle({ clipPath: 'inset(0 0 0 100%)' });
     fireEvent.keyUp(compare, { key: ' ' });
-    expect(screen.getByTestId('filtered-layer')).toHaveStyle({ clipPath: 'inset(0 50% 0 0)' });
+    expect(screen.getByTestId('filtered-layer')).toHaveStyle({ clipPath: 'inset(0 0 0 50%)' });
   });
 
   it('opens export and confirms replacing the current photo', async () => {

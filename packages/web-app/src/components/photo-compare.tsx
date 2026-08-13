@@ -83,7 +83,7 @@ export function PhotoCompare({ original, filtered, showOriginal }: PhotoCompareP
           className="photo-compare__filtered"
           data-testid="filtered-layer"
           aria-hidden={showOriginal ? 'true' : undefined}
-          style={{ clipPath: `inset(0 ${showOriginal ? 100 : 100 - position}% 0 0)` }}
+          style={{ clipPath: `inset(0 0 0 ${showOriginal ? 100 : position}%)` }}
         >
           <canvas ref={filteredCanvas} className="photo-compare__canvas" aria-label="滤镜效果" />
         </div>
@@ -96,7 +96,7 @@ export function PhotoCompare({ original, filtered, showOriginal }: PhotoCompareP
             aria-valuemin={0}
             aria-valuemax={100}
             aria-valuenow={position}
-            aria-valuetext={`滤镜 ${position}%`}
+            aria-valuetext={`原图 ${position}%`}
             style={{ left: `${position}%` }}
             onKeyDown={handleKeyDown}
           >
@@ -105,8 +105,8 @@ export function PhotoCompare({ original, filtered, showOriginal }: PhotoCompareP
         ) : null}
         {!showOriginal ? (
           <>
-            <span className="photo-compare__label" style={{ left: '12px' }}>滤镜</span>
-            <span className="photo-compare__label" style={{ right: '12px' }}>原图</span>
+            <span className="photo-compare__label" style={{ left: '12px' }}>原图</span>
+            <span className="photo-compare__label" style={{ right: '12px' }}>滤镜</span>
           </>
         ) : null}
       </div>

@@ -29,15 +29,15 @@ describe('PhotoCompare', () => {
     expect(drawPixelBuffer).toHaveBeenCalledTimes(2);
     expect(drawPixelBuffer).toHaveBeenNthCalledWith(1, expect.any(HTMLCanvasElement), original);
     expect(drawPixelBuffer).toHaveBeenNthCalledWith(2, expect.any(HTMLCanvasElement), filtered);
-    expect(screen.getByTestId('filtered-layer')).toHaveStyle({ clipPath: 'inset(0 50% 0 0)' });
-    expect(screen.getByRole('slider', { name: '原图与滤镜对比' })).toHaveAttribute('aria-valuetext', '滤镜 50%');
+    expect(screen.getByTestId('filtered-layer')).toHaveStyle({ clipPath: 'inset(0 0 0 50%)' });
+    expect(screen.getByRole('slider', { name: '原图与滤镜对比' })).toHaveAttribute('aria-valuetext', '原图 50%');
   });
 
   it('places each label over the image shown on that side', () => {
     render(<PhotoCompare original={original} filtered={filtered} showOriginal={false} />);
 
-    expect(screen.getByText('滤镜')).toHaveStyle({ left: '12px' });
-    expect(screen.getByText('原图')).toHaveStyle({ right: '12px' });
+    expect(screen.getByText('原图')).toHaveStyle({ left: '12px' });
+    expect(screen.getByText('滤镜')).toHaveStyle({ right: '12px' });
   });
 
   it('supports arrow, Home and End keyboard controls', () => {
@@ -50,8 +50,10 @@ describe('PhotoCompare', () => {
     expect(slider).toHaveAttribute('aria-valuenow', '50');
     fireEvent.keyDown(slider, { key: 'Home' });
     expect(slider).toHaveAttribute('aria-valuenow', '0');
+    expect(screen.getByTestId('filtered-layer')).toHaveStyle({ clipPath: 'inset(0 0 0 0%)' });
     fireEvent.keyDown(slider, { key: 'End' });
     expect(slider).toHaveAttribute('aria-valuenow', '100');
+    expect(screen.getByTestId('filtered-layer')).toHaveStyle({ clipPath: 'inset(0 0 0 100%)' });
   });
 
   it('converts pointer positions to a clamped percentage', () => {
@@ -80,11 +82,11 @@ describe('PhotoCompare', () => {
     const { rerender } = render(
       <PhotoCompare original={original} filtered={filtered} showOriginal={false} />,
     );
-    expect(screen.getByTestId('filtered-layer')).toHaveStyle({ clipPath: 'inset(0 50% 0 0)' });
+    expect(screen.getByTestId('filtered-layer')).toHaveStyle({ clipPath: 'inset(0 0 0 50%)' });
 
     rerender(<PhotoCompare original={original} filtered={filtered} showOriginal />);
 
-    expect(screen.getByTestId('filtered-layer')).toHaveStyle({ clipPath: 'inset(0 100% 0 0)' });
+    expect(screen.getByTestId('filtered-layer')).toHaveStyle({ clipPath: 'inset(0 0 0 100%)' });
     expect(screen.getByTestId('filtered-layer')).toHaveAttribute('aria-hidden', 'true');
     expect(screen.queryByRole('slider')).not.toBeInTheDocument();
     expect(screen.queryByText('滤镜')).not.toBeInTheDocument();

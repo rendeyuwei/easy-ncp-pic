@@ -267,6 +267,48 @@ describe('useImageSession', () => {
     expect(result.current.busy).toBe(false);
   });
 
+  it('rejects an invalid replacement without invalidating a pending first-filter preview', async () => {
+    const pending = deferred<PixelBuffer>();
+    const engine = fakeEngine({
+      renderPreview: vi.fn()
+        .mockResolvedValueOnce(original)
+        .mockImplementationOnce(() => pending.promise),
+    });
+    const filters = parsePublicFilters(publicFiltersFixture).categories[0].filters;
+    const { result } = renderHook(() => useImageSession(filters, () => engine));
+    await act(() => result.current.load(new File([new Uint8Array([1])], 'p.png', { type: 'image/png' })));
+
+    let previewRequest!: Promise<void>;
+    act(() => { previewRequest = result.current.selectFilter(filters[0]); });
+    let previewSettled = false;
+    const settlement = previewRequest.then(() => { previewSettled = true; });
+
+    await act(() => result.current.load(new File([new Uint8Array([2])], 'invalid.gif', { type: 'image/gif' })));
+    await act(async () => { await Promise.resolve(); });
+
+    expect(previewSettled).toBe(false);
+    expect(engine.load).toHaveBeenCalledOnce();
+    expect(engine.renderPreview).toHaveBeenCalledTimes(2);
+    expect(result.current.pendingFilter?.id).toBe(filters[0].id);
+    expect(result.current.previewing).toBe(true);
+    expect(result.current.loading).toBe(false);
+    expect(result.current.busy).toBe(true);
+    expect(result.current.selectedFilter).toBeNull();
+    expect(result.current.filteredPreview).toEqual(original);
+    expect(result.current.error).toBe('请选择 JPG 或 PNG 照片。');
+
+    await act(async () => {
+      pending.resolve(newer);
+      await Promise.all([previewRequest, settlement]);
+    });
+
+    expect(result.current.selectedFilter?.id).toBe(filters[0].id);
+    expect(result.current.filteredPreview).toEqual(newer);
+    expect(result.current.pendingFilter).toBeNull();
+    expect(result.current.previewing).toBe(false);
+    expect(result.current.busy).toBe(false);
+  });
+
   it('suppresses a stale preview rejection and progress after newer work is queued', async () => {
     const stale = deferred<PixelBuffer>();
     const latest = deferred<PixelBuffer>();
@@ -1000,6 +1042,53 @@ describe('useImageSession', () => {
     expect(result.current.busy).toBe(false);
     expect(result.current.selectedFilter?.id).toBe(filters[1].id);
     expect(result.current.error).toBe('导出失败。编辑状态已保留，请重试。 (export failed)');
+  });
+
+  it('rejects a concurrent direct export without replacing the active export owner', async () => {
+    const first = deferred<Uint8Array>();
+    let firstProgress!: (event: { stage: 'encode'; value: number }) => void;
+    const firstBytes = new Uint8Array([4, 5, 6]);
+    const engine = fakeEngine({
+      exportImage: vi.fn((...args: Parameters<WorkerEngine['exportImage']>) => {
+        firstProgress = args[3]?.onProgress as typeof firstProgress;
+        return first.promise;
+      }),
+    });
+    const filters = parsePublicFilters(publicFiltersFixture).categories[0].filters;
+    const { result } = renderHook(() => useImageSession(filters, () => engine));
+    await act(() => result.current.load(new File([new Uint8Array([1])], 'p.png', { type: 'image/png' })));
+    await act(() => result.current.selectFilter(filters[0]));
+
+    let firstRequest!: Promise<Uint8Array>;
+    act(() => { firstRequest = result.current.exportImage({ type: 'image/png' }); });
+    act(() => firstProgress({ stage: 'encode', value: 0.4 }));
+
+    let secondRequest!: Promise<Uint8Array>;
+    act(() => { secondRequest = result.current.exportImage({ type: 'image/jpeg', quality: 0.8 }); });
+    let secondRejected = false;
+    const secondSettlement = secondRequest.catch((error: unknown) => {
+      secondRejected = error instanceof Error && error.message === '已有导出任务正在进行。';
+    });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(secondRejected).toBe(true);
+    expect(engine.exportImage).toHaveBeenCalledOnce();
+    expect(result.current.exporting).toBe(true);
+    expect(result.current.busy).toBe(true);
+    expect(result.current.progress).toBe(0.4);
+    expect(result.current.progressStage).toBe('encode');
+    expect(result.current.error).toBeNull();
+
+    act(() => firstProgress({ stage: 'encode', value: 0.8 }));
+    expect(result.current.progress).toBe(0.8);
+    await act(async () => {
+      first.resolve(firstBytes);
+      await Promise.all([firstRequest, secondSettlement]);
+    });
+
+    expect(result.current.exporting).toBe(false);
+    expect(result.current.busy).toBe(false);
+    await expect(firstRequest).resolves.toEqual(firstBytes);
   });
 
   it('distinguishes total-pixel and side-length limit errors', async () => {

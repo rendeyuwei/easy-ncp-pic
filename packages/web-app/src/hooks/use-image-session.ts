@@ -51,7 +51,7 @@ interface FilterSelection {
   readonly intensity: number;
 }
 
-type OperationName = 'load' | 'preview' | 'export';
+type OperationName = 'load' | 'preview' | 'export' | 'validation';
 
 interface OperationStatus {
   readonly active: boolean;
@@ -78,6 +78,7 @@ function idleOperations(): OperationStatuses {
     load: idleOperation,
     preview: idleOperation,
     export: idleOperation,
+    validation: idleOperation,
   };
 }
 
@@ -210,6 +211,14 @@ export function useImageSession(
         [name]: { ...operation, ...updates, active: false, sequence },
       };
     });
+  }, []);
+
+  const setValidationError = useCallback((message: string | null): void => {
+    const sequence = ++operationSequence.current;
+    setOperations((current) => ({
+      ...current,
+      validation: { ...idleOperation, sequence, error: message },
+    }));
   }, []);
 
   const runPreviewLoop = useCallback(async (): Promise<void> => {
@@ -395,15 +404,15 @@ export function useImageSession(
   }, [getEngine, invalidatePreviews]);
 
   const load = useCallback(async (file: File): Promise<void> => {
+    if (!accepts(file)) {
+      setValidationError('请选择 JPG 或 PNG 照片。');
+      return;
+    }
+    setValidationError(null);
     const token = ++loadToken.current;
     activeLoadToken.current = token;
     invalidatePreviews();
     beginOperation('load', token);
-    if (!accepts(file)) {
-      activeLoadToken.current = null;
-      finishOperation('load', token, { error: '请选择 JPG 或 PNG 照片。' });
-      return;
-    }
     thumbnailGeneration.current++;
     thumbnailQueue.current = [];
     thumbnailQueuedIds.current.clear();
@@ -468,6 +477,7 @@ export function useImageSession(
     finishOperation,
     getEngine,
     invalidatePreviews,
+    setValidationError,
     updateOperationProgress,
   ]);
 
@@ -490,6 +500,7 @@ export function useImageSession(
   }, [queuePreview]);
 
   const exportImage = useCallback(async (options: ExportOptions): Promise<Uint8Array> => {
+    if (activeExportToken.current !== null) throw new Error('已有导出任务正在进行。');
     const activeImage = imageRef.current;
     const selection = committedSelectionRef.current;
     const filter = selection.filter;

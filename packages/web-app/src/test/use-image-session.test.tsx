@@ -104,6 +104,100 @@ describe('useImageSession', () => {
     expect(result.current.filteredPreview).toEqual(newer);
   });
 
+  it('never lets an older image load replace the latest file', async () => {
+    const first = deferred<WorkerLoadedImage>();
+    const second = deferred<WorkerLoadedImage>();
+    const firstImage = { ...loaded, id: 'first-image' };
+    const secondImage = { ...loaded, id: 'second-image' };
+    const engine = fakeEngine({
+      load: vi.fn()
+        .mockImplementationOnce(() => first.promise)
+        .mockImplementationOnce(() => second.promise),
+    });
+    const filters = parsePublicFilters(publicFiltersFixture).categories[0].filters;
+    const { result } = renderHook(() => useImageSession(filters, () => engine));
+    let firstRequest!: Promise<void>;
+    let secondRequest!: Promise<void>;
+
+    act(() => {
+      firstRequest = result.current.load(new File([new Uint8Array([1])], 'first.png', { type: 'image/png' }));
+    });
+    await waitFor(() => expect(engine.load).toHaveBeenCalledOnce());
+    act(() => {
+      secondRequest = result.current.load(new File([new Uint8Array([2])], 'second.png', { type: 'image/png' }));
+    });
+    await waitFor(() => expect(engine.load).toHaveBeenCalledTimes(2));
+    await act(async () => { second.resolve(secondImage); await secondRequest; });
+    await act(async () => { first.resolve(firstImage); await firstRequest; });
+
+    expect(result.current.image).toEqual(secondImage);
+    expect(result.current.fileName).toBe('second.png');
+    expect(engine.disposeImage).toHaveBeenCalledWith(firstImage);
+  });
+
+  it('disposes an in-flight image without recreating the engine after unmount', async () => {
+    const pending = deferred<WorkerLoadedImage>();
+    const engine = fakeEngine({ load: vi.fn(() => pending.promise) });
+    const factory: ImageEngineFactory = vi.fn(() => engine);
+    const filters = parsePublicFilters(publicFiltersFixture).categories[0].filters;
+    const { result, unmount } = renderHook(() => useImageSession(filters, factory));
+    let request!: Promise<void>;
+
+    act(() => {
+      request = result.current.load(new File([new Uint8Array([1])], 'pending.png', { type: 'image/png' }));
+    });
+    await waitFor(() => expect(engine.load).toHaveBeenCalledOnce());
+    unmount();
+    await act(async () => { pending.resolve(loaded); await request; });
+
+    expect(engine.renderPreview).not.toHaveBeenCalled();
+    expect(engine.disposeImage).toHaveBeenCalledWith(loaded);
+    expect(factory).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the committed filter and preview when a new filter render fails', async () => {
+    const engine = fakeEngine({
+      renderPreview: vi.fn()
+        .mockResolvedValueOnce(original)
+        .mockResolvedValueOnce(newer)
+        .mockRejectedValueOnce(new Error('render failed')),
+    });
+    const filters = parsePublicFilters({
+      categories: [{ ...publicFiltersFixture.categories[0], filters: [
+        publicFiltersFixture.categories[0].filters[0],
+        { ...publicFiltersFixture.categories[0].filters[0], id: 'filter-2', displayName: 'Second' },
+      ] }],
+    }).categories[0].filters;
+    const { result } = renderHook(() => useImageSession(filters, () => engine));
+    await act(() => result.current.load(new File([new Uint8Array([1])], 'p.png', { type: 'image/png' })));
+    await act(() => result.current.selectFilter(filters[0]));
+
+    await act(() => result.current.selectFilter(filters[1]));
+
+    expect(result.current.selectedFilter?.id).toBe(filters[0].id);
+    expect(result.current.filteredPreview).toEqual(newer);
+    expect(result.current.error).toContain('滤镜预览失败');
+  });
+
+  it('rolls intensity back to the last rendered value when rendering fails', async () => {
+    const engine = fakeEngine({
+      renderPreview: vi.fn()
+        .mockResolvedValueOnce(original)
+        .mockResolvedValueOnce(newer)
+        .mockRejectedValueOnce(new Error('render failed')),
+    });
+    const filters = parsePublicFilters(publicFiltersFixture).categories[0].filters;
+    const { result } = renderHook(() => useImageSession(filters, () => engine));
+    await act(() => result.current.load(new File([new Uint8Array([1])], 'p.png', { type: 'image/png' })));
+    await act(() => result.current.selectFilter(filters[0]));
+
+    act(() => result.current.setIntensity(0.5));
+    await waitFor(() => expect(result.current.error).toContain('滤镜预览失败'));
+
+    expect(result.current.intensity).toBe(1);
+    expect(result.current.filteredPreview).toEqual(newer);
+  });
+
   it('generates thumbnails when filters arrive after the photo loads', async () => {
     const engine = fakeEngine();
     const filters = parsePublicFilters(publicFiltersFixture).categories[0].filters;
@@ -132,10 +226,24 @@ describe('useImageSession', () => {
     await waitFor(() => expect(result.current.intensity).toBe(1));
 
     await act(async () => {
-      await expect(result.current.exportImage({ type: 'image/png', quality: 0.92 })).rejects.toThrow('out of memory');
+      await expect(result.current.exportImage({ type: 'image/jpeg', quality: 0.92 })).rejects.toThrow('out of memory');
     });
     expect(result.current.image).toEqual(loaded);
     expect(result.current.selectedFilter?.id).toBe(filters[0].id);
-    expect(result.current.error).toContain('导出失败');
+    expect(result.current.error).toBe('导出失败。编辑状态已保留，请重试。 (out of memory)');
+  });
+
+  it('distinguishes total-pixel and side-length limit errors', async () => {
+    const filters = parsePublicFilters(publicFiltersFixture).categories[0].filters;
+    const totalEngine = fakeEngine({ load: vi.fn().mockRejectedValue(new Error('Image total 85500000 pixels exceeds the 80000000 pixel limit')) });
+    const sideEngine = fakeEngine({ load: vi.fn().mockRejectedValue(new Error('Image dimension 10001px exceeds the 10000px side limit')) });
+    const total = renderHook(() => useImageSession(filters, () => totalEngine));
+    const side = renderHook(() => useImageSession(filters, () => sideEngine));
+
+    await act(() => total.result.current.load(new File([new Uint8Array([1])], 'total.png', { type: 'image/png' })));
+    await act(() => side.result.current.load(new File([new Uint8Array([1])], 'side.png', { type: 'image/png' })));
+
+    expect(total.result.current.error).toContain('不超过 8000 万总像素');
+    expect(side.result.current.error).toContain('边长不超过 10000 像素');
   });
 });

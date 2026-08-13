@@ -33,6 +33,13 @@ describe('PhotoCompare', () => {
     expect(screen.getByRole('slider', { name: '原图与滤镜对比' })).toHaveAttribute('aria-valuetext', '滤镜 50%');
   });
 
+  it('places each label over the image shown on that side', () => {
+    render(<PhotoCompare original={original} filtered={filtered} showOriginal={false} />);
+
+    expect(screen.getByText('滤镜')).toHaveStyle({ left: '12px' });
+    expect(screen.getByText('原图')).toHaveStyle({ right: '12px' });
+  });
+
   it('supports arrow, Home and End keyboard controls', () => {
     render(<PhotoCompare original={original} filtered={filtered} showOriginal={false} />);
     const slider = screen.getByRole('slider', { name: '原图与滤镜对比' });
@@ -78,6 +85,9 @@ describe('PhotoCompare', () => {
     rerender(<PhotoCompare original={original} filtered={filtered} showOriginal />);
 
     expect(screen.getByTestId('filtered-layer')).toHaveStyle({ clipPath: 'inset(0 100% 0 0)' });
-    expect(screen.getByRole('slider')).toHaveAttribute('aria-valuenow', '50');
+    expect(screen.getByTestId('filtered-layer')).toHaveAttribute('aria-hidden', 'true');
+    expect(screen.queryByRole('slider')).not.toBeInTheDocument();
+    expect(screen.queryByText('滤镜')).not.toBeInTheDocument();
+    expect(screen.queryByText('原图')).not.toBeInTheDocument();
   });
 });

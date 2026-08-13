@@ -11,16 +11,24 @@ export interface UploadScreenProps {
   onFile(file: File): void;
   selectedFileName?: string;
   busy?: boolean;
+  progress?: number;
   error?: string | null;
 }
 
-export function UploadScreen({ onFile, selectedFileName, busy = false, error = null }: UploadScreenProps) {
+export function UploadScreen({
+  onFile,
+  selectedFileName,
+  busy = false,
+  progress = 0,
+  error = null,
+}: UploadScreenProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const dragDepth = useRef(0);
   const [dragging, setDragging] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
 
   const acceptFiles = (files: FileList | ReadonlyArray<File>): void => {
+    if (busy) return;
     if (files.length !== 1) {
       setValidationError('一次只能处理一张照片。');
       return;
@@ -34,16 +42,20 @@ export function UploadScreen({ onFile, selectedFileName, busy = false, error = n
     onFile(file);
   };
 
-  const openPicker = (): void => inputRef.current?.click();
+  const openPicker = (): void => {
+    if (!busy) inputRef.current?.click();
+  };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
     if (event.key !== 'Enter' && event.key !== ' ') return;
     event.preventDefault();
+    if (busy) return;
     openPicker();
   };
 
   const handleDragEnter = (event: DragEvent<HTMLDivElement>): void => {
     event.preventDefault();
+    if (busy) return;
     dragDepth.current += 1;
     setDragging(true);
   };
@@ -58,6 +70,7 @@ export function UploadScreen({ onFile, selectedFileName, busy = false, error = n
     event.preventDefault();
     dragDepth.current = 0;
     setDragging(false);
+    if (busy) return;
     acceptFiles(event.dataTransfer.files);
   };
 
@@ -72,7 +85,7 @@ export function UploadScreen({ onFile, selectedFileName, busy = false, error = n
         <div
           className="upload-dropzone"
           role="button"
-          tabIndex={0}
+          tabIndex={busy ? -1 : 0}
           aria-label="上传照片"
           aria-disabled={busy}
           data-dragging={dragging ? 'true' : 'false'}
@@ -103,7 +116,12 @@ export function UploadScreen({ onFile, selectedFileName, busy = false, error = n
 
         <p className="privacy-note"><LockKeyhole aria-hidden="true" />照片不会上传服务器</p>
         {selectedFileName ? <p className="file-status">已选择：{selectedFileName}</p> : null}
-        {busy ? <p role="status">正在打开照片…</p> : null}
+        {busy ? (
+          <div role="status">
+            <span>正在打开照片 {Math.round(progress * 100)}%</span>
+            <progress value={progress} max={1} />
+          </div>
+        ) : null}
         {validationError || error ? <p role="alert">{validationError ?? error}</p> : null}
       </section>
     </main>

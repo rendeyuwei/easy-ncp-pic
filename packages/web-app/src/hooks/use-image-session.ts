@@ -71,8 +71,9 @@ async function readFileBytes(file: File): Promise<Uint8Array> {
 
 function userError(error: unknown, phase: 'load' | 'render' | 'export'): string {
   const message = error instanceof Error ? error.message : String(error);
-  if (phase === 'export') return `导出失败。编辑状态已保留，请重试或改用 JPG。${message ? ` (${message})` : ''}`;
-  if (/10000|80,?000,?000|pixel|dimension/i.test(message)) return '照片尺寸过大，请选择边长不超过 10000 像素的照片。';
+  if (phase === 'export') return `导出失败。编辑状态已保留，请重试。${message ? ` (${message})` : ''}`;
+  if (/80,?000,?000|total/i.test(message)) return '照片尺寸过大，请选择不超过 8000 万总像素的照片。';
+  if (/10000|side|dimension/i.test(message)) return '照片尺寸过大，请选择边长不超过 10000 像素的照片。';
   if (/worker/i.test(message)) return '图片处理线程启动失败，请刷新页面后重试。';
   if (phase === 'render') return '滤镜预览失败，请选择其他滤镜或重试。';
   return '无法读取这张照片，请确认文件是有效的 JPG 或 PNG。';
@@ -94,6 +95,9 @@ export function useImageSession(
   const imageRef = useRef<WorkerLoadedImage | null>(null);
   const selectedRef = useRef<PublicFilter | null>(null);
   const intensityRef = useRef(1);
+  const renderedFilterRef = useRef<PublicFilter | null>(null);
+  const renderedIntensityRef = useRef(1);
+  const loadToken = useRef(0);
   const renderToken = useRef(0);
 
   const [image, setImage] = useState<WorkerLoadedImage | null>(null);
@@ -128,11 +132,27 @@ export function useImageSession(
         toFilterParams(filter),
         nextIntensity,
         previewLongEdge(),
-        { onProgress: updateProgress },
+        { onProgress: (event) => {
+          if (token === renderToken.current) updateProgress(event);
+        } },
       );
-      if (token === renderToken.current) setFilteredPreview(preview);
+      if (token === renderToken.current) {
+        setFilteredPreview(preview);
+        renderedFilterRef.current = filter;
+        renderedIntensityRef.current = nextIntensity;
+        selectedRef.current = filter;
+        setSelectedFilter(filter);
+        intensityRef.current = nextIntensity;
+        setIntensityState(nextIntensity);
+      }
     } catch (renderError) {
-      if (token === renderToken.current) setError(userError(renderError, 'render'));
+      if (token === renderToken.current) {
+        selectedRef.current = renderedFilterRef.current;
+        setSelectedFilter(renderedFilterRef.current);
+        intensityRef.current = renderedIntensityRef.current;
+        setIntensityState(renderedIntensityRef.current);
+        setError(userError(renderError, 'render'));
+      }
     } finally {
       if (token === renderToken.current) setBusy(false);
     }
@@ -161,11 +181,14 @@ export function useImageSession(
   }, [filters, generateThumbnails]);
 
   const reset = useCallback(async (): Promise<void> => {
+    loadToken.current++;
     renderToken.current++;
     const active = imageRef.current;
     imageRef.current = null;
     selectedRef.current = null;
     intensityRef.current = 1;
+    renderedFilterRef.current = null;
+    renderedIntensityRef.current = 1;
     setImage(null);
     setFileName('');
     setSelectedFilter(null);
@@ -186,34 +209,49 @@ export function useImageSession(
       setError('请选择 JPG 或 PNG 照片。');
       return;
     }
+    const token = ++loadToken.current;
+    renderToken.current++;
     setBusy(true);
     setError(null);
     setProgress(0);
+    let loaded: WorkerLoadedImage | null = null;
+    let committed = false;
+    let engine: WorkerEngine | null = null;
     try {
-      const engine = getEngine();
-      const previous = imageRef.current;
-      if (previous) await engine.disposeImage(previous);
-      renderToken.current++;
+      engine = getEngine();
       const bytes = await readFileBytes(file);
-      const loaded = await engine.load(bytes, { onProgress: updateProgress });
+      if (token !== loadToken.current) return;
+      loaded = await engine.load(bytes, { onProgress: (event) => {
+        if (token === loadToken.current) updateProgress(event);
+      } });
+      if (token !== loadToken.current) return;
       const preview = await engine.renderPreview(loaded, identityParams(), 1, previewLongEdge(), {
-        onProgress: updateProgress,
+        onProgress: (event) => {
+          if (token === loadToken.current) updateProgress(event);
+        },
       });
+      if (token !== loadToken.current) return;
+      const previous = imageRef.current;
       imageRef.current = loaded;
+      committed = true;
       setImage(loaded);
       setFileName(file.name);
       selectedRef.current = null;
       setSelectedFilter(null);
       intensityRef.current = 1;
       setIntensityState(1);
+      renderedFilterRef.current = null;
+      renderedIntensityRef.current = 1;
       setOriginalPreview(preview);
       setFilteredPreview(preview);
       setProgress(1);
       void generateThumbnails(loaded);
+      if (previous && previous.id !== loaded.id) await engine.disposeImage(previous);
     } catch (loadError) {
-      setError(userError(loadError, 'load'));
+      if (token === loadToken.current) setError(userError(loadError, 'load'));
     } finally {
-      setBusy(false);
+      if (loaded && !committed && engine) await engine.disposeImage(loaded).catch(() => undefined);
+      if (token === loadToken.current) setBusy(false);
     }
   }, [generateThumbnails, getEngine, updateProgress]);
 
@@ -254,6 +292,8 @@ export function useImageSession(
   }, [getEngine, updateProgress]);
 
   useEffect(() => () => {
+    loadToken.current++;
+    renderToken.current++;
     const active = imageRef.current;
     const engine = engineRef.current;
     imageRef.current = null;

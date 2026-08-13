@@ -6,17 +6,23 @@ import { clsx } from 'clsx';
 export const Dialog = DialogPrimitive.Root;
 export const DialogTrigger = DialogPrimitive.Trigger;
 
+interface DialogContentProps extends ComponentPropsWithoutRef<typeof DialogPrimitive.Content> {
+  showClose?: boolean;
+}
+
 export const DialogContent = forwardRef<
   ElementRef<typeof DialogPrimitive.Content>,
-  ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
->(({ className, children, ...props }, ref) => (
+  DialogContentProps
+>(({ className, children, showClose = true, ...props }, ref) => (
   <DialogPrimitive.Portal>
     <DialogPrimitive.Overlay className="dialog__overlay" />
     <DialogPrimitive.Content ref={ref} className={clsx('dialog__content', className)} {...props}>
       {children}
-      <DialogPrimitive.Close className="dialog__close" aria-label="关闭">
-        <X aria-hidden="true" />
-      </DialogPrimitive.Close>
+      {showClose ? (
+        <DialogPrimitive.Close className="dialog__close" aria-label="关闭">
+          <X aria-hidden="true" />
+        </DialogPrimitive.Close>
+      ) : null}
     </DialogPrimitive.Content>
   </DialogPrimitive.Portal>
 ));

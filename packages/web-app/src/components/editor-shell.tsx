@@ -77,7 +77,11 @@ export function EditorShell({
           <EditorControls
             intensity={session.intensity}
             busy={session.busy}
-            canAdjustIntensity={session.selectedFilter !== null || session.pendingFilter !== null}
+            canAdjustIntensity={
+              (session.selectedFilter !== null || session.pendingFilter !== null)
+              && !session.loading
+              && !session.exporting
+            }
             canExport={session.selectedFilter !== null}
             onIntensityChange={session.setIntensity}
             onCompareChange={setShowOriginal}

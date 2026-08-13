@@ -26,6 +26,9 @@ export interface ImageSessionState {
   progress: number;
   progressStage: string | null;
   busy: boolean;
+  loading: boolean;
+  previewing: boolean;
+  exporting: boolean;
   error: string | null;
   fallbackNotice: string | null;
   load(file: File): Promise<void>;
@@ -41,6 +44,41 @@ interface PreviewRequest {
   readonly intensity: number;
   readonly token: number;
   resolve(): void;
+}
+
+interface FilterSelection {
+  readonly filter: PublicFilter | null;
+  readonly intensity: number;
+}
+
+type OperationName = 'load' | 'preview' | 'export';
+
+interface OperationStatus {
+  readonly active: boolean;
+  readonly token: number;
+  readonly sequence: number;
+  readonly progress: number;
+  readonly stage: string | null;
+  readonly error: string | null;
+}
+
+type OperationStatuses = Record<OperationName, OperationStatus>;
+
+const idleOperation: OperationStatus = {
+  active: false,
+  token: 0,
+  sequence: 0,
+  progress: 0,
+  stage: null,
+  error: null,
+};
+
+function idleOperations(): OperationStatuses {
+  return {
+    load: idleOperation,
+    preview: idleOperation,
+    export: idleOperation,
+  };
 }
 
 function identityParams(): FilterParams {
@@ -102,17 +140,16 @@ export function useImageSession(
     return engineRef.current;
   }, []);
   const imageRef = useRef<WorkerLoadedImage | null>(null);
-  const selectedRef = useRef<PublicFilter | null>(null);
-  const intensityRef = useRef(1);
-  const renderedFilterRef = useRef<PublicFilter | null>(null);
-  const renderedIntensityRef = useRef(1);
+  const committedSelectionRef = useRef<FilterSelection>({ filter: null, intensity: 1 });
+  const requestedSelectionRef = useRef<FilterSelection>({ filter: null, intensity: 1 });
   const loadToken = useRef(0);
+  const activeLoadToken = useRef<number | null>(null);
   const renderToken = useRef(0);
+  const exportToken = useRef(0);
+  const activeExportToken = useRef<number | null>(null);
   const previewRunning = useRef(false);
   const runningPreview = useRef<PreviewRequest | null>(null);
   const queuedPreview = useRef<PreviewRequest | null>(null);
-  const requestedFilterRef = useRef<PublicFilter | null>(null);
-  const requestedIntensityRef = useRef(1);
   const thumbnailGeneration = useRef(0);
   const thumbnailQueue = useRef<PublicFilter[]>([]);
   const thumbnailQueuedIds = useRef(new Set<string>());
@@ -129,14 +166,50 @@ export function useImageSession(
   const [filteredPreview, setFilteredPreview] = useState<PixelBuffer | null>(null);
   const [thumbnails, setThumbnails] = useState<ReadonlyMap<string, PixelBuffer>>(new Map());
   const [thumbnailLoading, setThumbnailLoading] = useState<ReadonlySet<string>>(new Set());
-  const [progress, setProgress] = useState(0);
-  const [progressStage, setProgressStage] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [operations, setOperations] = useState<OperationStatuses>(idleOperations);
+  const operationSequence = useRef(0);
 
-  const updateProgress = useCallback(({ stage, value }: { stage: string; value: number }) => {
-    setProgressStage(stage);
-    setProgress((current) => Math.max(current, value));
+  const beginOperation = useCallback((name: OperationName, token: number): void => {
+    const sequence = ++operationSequence.current;
+    setOperations((current) => ({
+      ...current,
+      [name]: { active: true, token, sequence, progress: 0, stage: null, error: null },
+    }));
+  }, []);
+
+  const updateOperationProgress = useCallback((
+    name: OperationName,
+    token: number,
+    { stage, value }: { stage: string; value: number },
+  ): void => {
+    setOperations((current) => {
+      const operation = current[name];
+      if (!operation.active || operation.token !== token) return current;
+      return {
+        ...current,
+        [name]: {
+          ...operation,
+          stage,
+          progress: Math.max(operation.progress, value),
+        },
+      };
+    });
+  }, []);
+
+  const finishOperation = useCallback((
+    name: OperationName,
+    token: number,
+    updates: Partial<Pick<OperationStatus, 'progress' | 'stage' | 'error'>> = {},
+  ): void => {
+    const sequence = ++operationSequence.current;
+    setOperations((current) => {
+      const operation = current[name];
+      if (operation.token !== token) return current;
+      return {
+        ...current,
+        [name]: { ...operation, ...updates, active: false, sequence },
+      };
+    });
   }, []);
 
   const runPreviewLoop = useCallback(async (): Promise<void> => {
@@ -162,7 +235,9 @@ export function useImageSession(
             request.intensity,
             previewLongEdge(),
             { onProgress: (event) => {
-              if (request.token === renderToken.current) updateProgress(event);
+              if (request.token === renderToken.current) {
+                updateOperationProgress('preview', request.token, event);
+              }
             } },
           );
         } catch (error) {
@@ -181,58 +256,51 @@ export function useImageSession(
 
         if (preview) {
           setFilteredPreview(preview);
-          renderedFilterRef.current = request.filter;
-          renderedIntensityRef.current = request.intensity;
-          selectedRef.current = request.filter;
-          intensityRef.current = request.intensity;
-          requestedFilterRef.current = request.filter;
-          requestedIntensityRef.current = request.intensity;
+          const committed = { filter: request.filter, intensity: request.intensity };
+          committedSelectionRef.current = committed;
+          requestedSelectionRef.current = committed;
           setSelectedFilter(request.filter);
           setIntensityState(request.intensity);
         } else {
-          requestedFilterRef.current = renderedFilterRef.current;
-          requestedIntensityRef.current = renderedIntensityRef.current;
-          selectedRef.current = renderedFilterRef.current;
-          intensityRef.current = renderedIntensityRef.current;
-          setSelectedFilter(renderedFilterRef.current);
-          setIntensityState(renderedIntensityRef.current);
-          setError(userError(renderError, 'render'));
+          requestedSelectionRef.current = committedSelectionRef.current;
+          setSelectedFilter(committedSelectionRef.current.filter);
+          setIntensityState(committedSelectionRef.current.intensity);
         }
         setPendingFilter(null);
-        setBusy(false);
+        finishOperation('preview', request.token, {
+          error: preview ? null : userError(renderError, 'render'),
+        });
         request.resolve();
       }
     } finally {
       runningPreview.current = null;
       previewRunning.current = false;
     }
-  }, [getEngine, updateProgress]);
+  }, [finishOperation, getEngine, updateOperationProgress]);
 
   const queuePreview = useCallback((filter: PublicFilter, nextIntensity: number): Promise<void> => {
-    if (!imageRef.current) return Promise.resolve();
-    requestedFilterRef.current = filter;
-    requestedIntensityRef.current = nextIntensity;
+    if (!imageRef.current || activeLoadToken.current !== null) return Promise.resolve();
+    requestedSelectionRef.current = { filter, intensity: nextIntensity };
     const token = ++renderToken.current;
     setPendingFilter(filter);
-    setBusy(true);
-    setError(null);
-    setProgress(0);
+    beginOperation('preview', token);
     return new Promise<void>((resolve) => {
       runningPreview.current?.resolve();
       queuedPreview.current?.resolve();
       queuedPreview.current = { filter, intensity: nextIntensity, token, resolve };
       void runPreviewLoop();
     });
-  }, [runPreviewLoop]);
+  }, [beginOperation, runPreviewLoop]);
 
-  const invalidatePreviews = useCallback((): void => {
+  const invalidatePreviews = useCallback((updateState: boolean = true): void => {
+    const token = renderToken.current;
     renderToken.current++;
     runningPreview.current?.resolve();
     queuedPreview.current?.resolve();
     queuedPreview.current = null;
-    requestedFilterRef.current = renderedFilterRef.current;
-    requestedIntensityRef.current = renderedIntensityRef.current;
-  }, []);
+    requestedSelectionRef.current = committedSelectionRef.current;
+    if (updateState && token > 0) finishOperation('preview', token, { error: null });
+  }, [finishOperation]);
 
   const pumpThumbnails = useCallback(async (): Promise<void> => {
     if (thumbnailRunning.current) return;
@@ -300,6 +368,9 @@ export function useImageSession(
 
   const reset = useCallback(async (): Promise<void> => {
     loadToken.current++;
+    activeLoadToken.current = null;
+    exportToken.current++;
+    activeExportToken.current = null;
     invalidatePreviews();
     thumbnailGeneration.current++;
     thumbnailQueue.current = [];
@@ -308,12 +379,8 @@ export function useImageSession(
     latestThumbnailFilters.current = [];
     const active = imageRef.current;
     imageRef.current = null;
-    selectedRef.current = null;
-    intensityRef.current = 1;
-    renderedFilterRef.current = null;
-    renderedIntensityRef.current = 1;
-    requestedFilterRef.current = null;
-    requestedIntensityRef.current = 1;
+    committedSelectionRef.current = { filter: null, intensity: 1 };
+    requestedSelectionRef.current = committedSelectionRef.current;
     setImage(null);
     setFileName('');
     setSelectedFilter(null);
@@ -323,45 +390,43 @@ export function useImageSession(
     setFilteredPreview(null);
     setThumbnails(new Map());
     setThumbnailLoading(new Set());
-    setProgress(0);
-    setProgressStage(null);
-    setBusy(false);
-    setError(null);
+    setOperations(idleOperations());
     if (active) await getEngine().disposeImage(active);
   }, [getEngine, invalidatePreviews]);
 
   const load = useCallback(async (file: File): Promise<void> => {
+    const token = ++loadToken.current;
+    activeLoadToken.current = token;
+    invalidatePreviews();
+    beginOperation('load', token);
     if (!accepts(file)) {
-      setError('请选择 JPG 或 PNG 照片。');
+      activeLoadToken.current = null;
+      finishOperation('load', token, { error: '请选择 JPG 或 PNG 照片。' });
       return;
     }
-    const token = ++loadToken.current;
-    invalidatePreviews();
     thumbnailGeneration.current++;
     thumbnailQueue.current = [];
     thumbnailQueuedIds.current.clear();
     thumbnailImageId.current = null;
     setPendingFilter(null);
-    setIntensityState(renderedIntensityRef.current);
+    setIntensityState(committedSelectionRef.current.intensity);
     setThumbnails(new Map());
     setThumbnailLoading(new Set());
-    setBusy(true);
-    setError(null);
-    setProgress(0);
     let loaded: WorkerLoadedImage | null = null;
     let committed = false;
     let engine: WorkerEngine | null = null;
+    let loadErrorMessage: string | null = null;
     try {
       engine = getEngine();
       const bytes = await readFileBytes(file);
       if (token !== loadToken.current) return;
       loaded = await engine.load(bytes, { onProgress: (event) => {
-        if (token === loadToken.current) updateProgress(event);
+        if (token === loadToken.current) updateOperationProgress('load', token, event);
       } });
       if (token !== loadToken.current) return;
       const preview = await engine.renderPreview(loaded, identityParams(), 1, previewLongEdge(), {
         onProgress: (event) => {
-          if (token === loadToken.current) updateProgress(event);
+          if (token === loadToken.current) updateOperationProgress('load', token, event);
         },
       });
       if (token !== loadToken.current) return;
@@ -371,34 +436,43 @@ export function useImageSession(
       committed = true;
       setImage(loaded);
       setFileName(file.name);
-      selectedRef.current = null;
       setSelectedFilter(null);
       setPendingFilter(null);
-      intensityRef.current = 1;
       setIntensityState(1);
-      renderedFilterRef.current = null;
-      renderedIntensityRef.current = 1;
-      requestedFilterRef.current = null;
-      requestedIntensityRef.current = 1;
+      committedSelectionRef.current = { filter: null, intensity: 1 };
+      requestedSelectionRef.current = committedSelectionRef.current;
       setOriginalPreview(preview);
       setFilteredPreview(preview);
-      setProgress(1);
+      updateOperationProgress('load', token, { stage: 'render', value: 1 });
       enqueueThumbnails(latestThumbnailFilters.current);
       if (previous && previous.id !== loaded.id) await engine.disposeImage(previous);
     } catch (loadError) {
       if (token === loadToken.current) {
         thumbnailImageId.current = imageRef.current?.id ?? null;
         enqueueThumbnails(latestThumbnailFilters.current);
-        setError(userError(loadError, 'load'));
+        loadErrorMessage = userError(loadError, 'load');
       }
     } finally {
       if (loaded && !committed && engine) await engine.disposeImage(loaded).catch(() => undefined);
-      if (token === loadToken.current) setBusy(false);
+      if (token === loadToken.current) {
+        activeLoadToken.current = null;
+        finishOperation('load', token, {
+          error: loadErrorMessage,
+          ...(committed ? { progress: 1 } : {}),
+        });
+      }
     }
-  }, [enqueueThumbnails, getEngine, invalidatePreviews, updateProgress]);
+  }, [
+    beginOperation,
+    enqueueThumbnails,
+    finishOperation,
+    getEngine,
+    invalidatePreviews,
+    updateOperationProgress,
+  ]);
 
   const selectFilter = useCallback((filter: PublicFilter): Promise<void> => (
-    queuePreview(filter, requestedIntensityRef.current)
+    queuePreview(filter, requestedSelectionRef.current.intensity)
   ), [queuePreview]);
 
   const requestThumbnails = useCallback((requestedFilters: ReadonlyArray<PublicFilter>): void => {
@@ -407,39 +481,50 @@ export function useImageSession(
   }, [enqueueThumbnails, image]);
 
   const setIntensity = useCallback((value: number): void => {
+    if (activeLoadToken.current !== null || activeExportToken.current !== null) return;
     const next = Math.min(1, Math.max(0, value));
-    requestedIntensityRef.current = next;
+    requestedSelectionRef.current = { ...requestedSelectionRef.current, intensity: next };
     setIntensityState(next);
-    const filter = requestedFilterRef.current;
+    const filter = requestedSelectionRef.current.filter;
     if (filter) void queuePreview(filter, next);
   }, [queuePreview]);
 
   const exportImage = useCallback(async (options: ExportOptions): Promise<Uint8Array> => {
     const activeImage = imageRef.current;
-    const filter = selectedRef.current;
+    const selection = committedSelectionRef.current;
+    const filter = selection.filter;
     if (!activeImage || !filter) throw new Error('请先选择一个滤镜。');
     const engine = getEngine();
-    setBusy(true);
-    setError(null);
-    setProgress(0);
+    const token = ++exportToken.current;
+    activeExportToken.current = token;
+    beginOperation('export', token);
+    let exportErrorMessage: string | null = null;
     try {
       return await engine.exportImage(
         activeImage,
         toFilterParams(filter),
-        { ...options, intensity: intensityRef.current },
-        { onProgress: updateProgress },
+        { ...options, intensity: selection.intensity },
+        { onProgress: (event) => {
+          if (token === exportToken.current) updateOperationProgress('export', token, event);
+        } },
       );
     } catch (exportError) {
-      setError(userError(exportError, 'export'));
+      exportErrorMessage = userError(exportError, 'export');
       throw exportError;
     } finally {
-      setBusy(false);
+      if (token === exportToken.current) {
+        activeExportToken.current = null;
+        finishOperation('export', token, { error: exportErrorMessage });
+      }
     }
-  }, [getEngine, updateProgress]);
+  }, [beginOperation, finishOperation, getEngine, updateOperationProgress]);
 
   useEffect(() => () => {
     loadToken.current++;
-    invalidatePreviews();
+    activeLoadToken.current = null;
+    exportToken.current++;
+    activeExportToken.current = null;
+    invalidatePreviews(false);
     thumbnailGeneration.current++;
     thumbnailQueue.current = [];
     thumbnailQueuedIds.current.clear();
@@ -453,6 +538,24 @@ export function useImageSession(
     engine?.dispose();
   }, [invalidatePreviews]);
 
+  const loading = operations.load.active;
+  const previewing = operations.preview.active;
+  const exporting = operations.export.active;
+  const busy = loading || previewing || exporting;
+  const activeFeedback = exporting
+    ? operations.export
+    : loading
+      ? operations.load
+      : previewing
+        ? operations.preview
+        : Object.values(operations).reduce((latest, operation) => (
+          operation.sequence > latest.sequence ? operation : latest
+        ), idleOperation);
+  const latestError = Object.values(operations).reduce<OperationStatus | null>((latest, operation) => {
+    if (!operation.error) return latest;
+    return !latest || operation.sequence > latest.sequence ? operation : latest;
+  }, null);
+
   return {
     image,
     fileName,
@@ -463,10 +566,13 @@ export function useImageSession(
     filteredPreview,
     thumbnails,
     thumbnailLoading,
-    progress,
-    progressStage,
+    progress: activeFeedback.progress,
+    progressStage: activeFeedback.stage,
     busy,
-    error,
+    loading,
+    previewing,
+    exporting,
+    error: latestError?.error ?? null,
     fallbackNotice,
     load,
     selectFilter,

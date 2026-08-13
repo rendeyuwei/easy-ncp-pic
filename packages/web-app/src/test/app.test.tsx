@@ -38,6 +38,9 @@ function session(overrides: Partial<ImageSessionState> = {}): ImageSessionState 
     progress: 0,
     progressStage: null,
     busy: false,
+    loading: false,
+    previewing: false,
+    exporting: false,
     error: null,
     fallbackNotice: null,
     load: vi.fn().mockResolvedValue(undefined),
@@ -108,6 +111,7 @@ describe('App editor integration', () => {
       pendingFilter,
       intensity: 0.4,
       busy: true,
+      previewing: true,
     });
     vi.mocked(useImageSession).mockReturnValue(state);
 
@@ -118,6 +122,23 @@ describe('App editor integration', () => {
     intensity.focus();
     await user.keyboard('{ArrowLeft}');
     expect(state.setIntensity).toHaveBeenCalledWith(0.39);
+    expect(screen.getByRole('button', { name: '导出' })).toBeDisabled();
+  });
+
+  it.each([
+    ['load', { loading: true }],
+    ['export', { exporting: true }],
+  ] as const)('disables strength during %s work', async (_operation, operationState) => {
+    const user = userEvent.setup();
+    const state = session({ busy: true, ...operationState });
+    vi.mocked(useImageSession).mockReturnValue(state);
+
+    render(<App />);
+
+    const intensity = screen.getByRole('slider', { name: '滤镜强度' });
+    intensity.focus();
+    await user.keyboard('{ArrowLeft}');
+    expect(state.setIntensity).not.toHaveBeenCalled();
     expect(screen.getByRole('button', { name: '导出' })).toBeDisabled();
   });
 

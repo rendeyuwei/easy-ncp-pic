@@ -185,8 +185,10 @@ describe('useImageSession', () => {
     const latestIntensity = vi.mocked(engine.renderPreview).mock.calls.at(-1)?.[2];
     await act(async () => {
       latest.resolve(newer);
-      await request;
+      await latest.promise;
     });
+    await waitFor(() => expect(result.current.busy).toBe(false));
+    await request;
 
     expect(intensityWhilePending).toBe(0.4);
     expect(selectedWhilePending).toBeNull();
@@ -197,6 +199,130 @@ describe('useImageSession', () => {
     expect(result.current.filteredPreview).toEqual(newer);
     expect(result.current.intensity).toBe(0.4);
     expect(result.current.busy).toBe(false);
+  });
+
+  it('settles and ignores filter and intensity input during a replacement load', async () => {
+    const replacementLoad = deferred<WorkerLoadedImage>();
+    const replacement = { ...loaded, id: 'replacement-image' };
+    const engine = fakeEngine({
+      load: vi.fn()
+        .mockResolvedValueOnce(loaded)
+        .mockImplementationOnce(() => replacementLoad.promise),
+      renderPreview: vi.fn()
+        .mockResolvedValueOnce(original)
+        .mockResolvedValueOnce(newer)
+        .mockResolvedValueOnce(older),
+    });
+    const filters = parsePublicFilters({
+      categories: [{ ...publicFiltersFixture.categories[0], filters: [
+        publicFiltersFixture.categories[0].filters[0],
+        { ...publicFiltersFixture.categories[0].filters[0], id: 'filter-2', displayName: 'Second' },
+      ] }],
+    }).categories[0].filters;
+    const { result } = renderHook(() => useImageSession(filters, () => engine));
+    await act(() => result.current.load(new File([new Uint8Array([1])], 'first.png', { type: 'image/png' })));
+    await act(() => result.current.selectFilter(filters[0]));
+
+    let replacementRequest!: Promise<void>;
+    act(() => {
+      replacementRequest = result.current.load(
+        new File([new Uint8Array([2])], 'replacement.png', { type: 'image/png' }),
+      );
+    });
+    await waitFor(() => expect(engine.load).toHaveBeenCalledTimes(2));
+
+    let selectionRequest!: Promise<void>;
+    act(() => {
+      selectionRequest = result.current.selectFilter(filters[1]);
+      result.current.setIntensity(0.4);
+    });
+    let selectionSettled = false;
+    const settlement = selectionRequest.then(() => { selectionSettled = true; });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(selectionSettled).toBe(true);
+    expect(engine.renderPreview).toHaveBeenCalledTimes(2);
+    expect(result.current.selectedFilter?.id).toBe(filters[0].id);
+    expect(result.current.filteredPreview).toEqual(newer);
+    expect(result.current.intensity).toBe(1);
+    expect(result.current.pendingFilter).toBeNull();
+    expect(result.current.busy).toBe(true);
+
+    await act(async () => {
+      replacementLoad.resolve(replacement);
+      await Promise.all([replacementRequest, selectionRequest, settlement]);
+    });
+
+    expect(engine.renderPreview).toHaveBeenCalledTimes(3);
+    expect(engine.renderPreview).toHaveBeenLastCalledWith(
+      replacement,
+      expect.anything(),
+      1,
+      expect.any(Number),
+      expect.any(Object),
+    );
+    expect(result.current.image).toEqual(replacement);
+    expect(result.current.selectedFilter).toBeNull();
+    expect(result.current.intensity).toBe(1);
+    expect(result.current.busy).toBe(false);
+  });
+
+  it('suppresses a stale preview rejection and progress after newer work is queued', async () => {
+    const stale = deferred<PixelBuffer>();
+    const latest = deferred<PixelBuffer>();
+    let staleProgress!: (event: { stage: 'render'; value: number }) => void;
+    let latestProgress!: (event: { stage: 'render'; value: number }) => void;
+    const engine = fakeEngine({
+      renderPreview: vi.fn()
+        .mockResolvedValueOnce(original)
+        .mockImplementationOnce((...args: Parameters<WorkerEngine['renderPreview']>) => {
+          staleProgress = args[4]?.onProgress as typeof staleProgress;
+          return stale.promise;
+        })
+        .mockImplementationOnce((...args: Parameters<WorkerEngine['renderPreview']>) => {
+          latestProgress = args[4]?.onProgress as typeof latestProgress;
+          return latest.promise;
+        }),
+    });
+    const filters = parsePublicFilters({
+      categories: [{ ...publicFiltersFixture.categories[0], filters: [
+        publicFiltersFixture.categories[0].filters[0],
+        { ...publicFiltersFixture.categories[0].filters[0], id: 'filter-2', displayName: 'Second' },
+      ] }],
+    }).categories[0].filters;
+    const { result } = renderHook(() => useImageSession(filters, () => engine));
+    await act(() => result.current.load(new File([new Uint8Array([1])], 'p.png', { type: 'image/png' })));
+
+    let staleRequest!: Promise<void>;
+    let latestRequest!: Promise<void>;
+    act(() => {
+      staleRequest = result.current.selectFilter(filters[0]);
+      staleProgress({ stage: 'render', value: 0.3 });
+      latestRequest = result.current.selectFilter(filters[1]);
+    });
+    expect(result.current.progress).toBe(0);
+
+    await act(async () => {
+      stale.reject(new Error('stale render failed'));
+      await staleRequest;
+      await Promise.resolve();
+    });
+    expect(result.current.error).toBeNull();
+    expect(result.current.pendingFilter?.id).toBe(filters[1].id);
+
+    act(() => {
+      latestProgress({ stage: 'render', value: 0.6 });
+      staleProgress({ stage: 'render', value: 0.9 });
+    });
+    expect(result.current.progress).toBe(0.6);
+
+    await act(async () => {
+      latest.resolve(newer);
+      await latestRequest;
+    });
+    expect(result.current.selectedFilter?.id).toBe(filters[1].id);
+    expect(result.current.filteredPreview).toEqual(newer);
+    expect(result.current.error).toBeNull();
   });
 
   it('clears a pending filter as soon as a replacement load supersedes its render', async () => {
@@ -766,6 +892,114 @@ describe('useImageSession', () => {
     expect(result.current.image).toEqual(loaded);
     expect(result.current.selectedFilter?.id).toBe(filters[0].id);
     expect(result.current.error).toBe('导出失败。编辑状态已保留，请重试。 (out of memory)');
+  });
+
+  it.each(['preview-first', 'export-first'] as const)(
+    'keeps busy and operation progress owned when %s completes',
+    async (completionOrder) => {
+      const preview = deferred<PixelBuffer>();
+      const exported = deferred<Uint8Array>();
+      let previewProgress!: (event: { stage: 'render'; value: number }) => void;
+      let exportProgress!: (event: { stage: 'encode'; value: number }) => void;
+      const bytes = new Uint8Array([9, 8, 7]);
+      const engine = fakeEngine({
+        renderPreview: vi.fn()
+          .mockResolvedValueOnce(original)
+          .mockResolvedValueOnce(newer)
+          .mockImplementationOnce((...args: Parameters<WorkerEngine['renderPreview']>) => {
+            previewProgress = args[4]?.onProgress as typeof previewProgress;
+            return preview.promise;
+          }),
+        exportImage: vi.fn((...args: Parameters<WorkerEngine['exportImage']>) => {
+          exportProgress = args[3]?.onProgress as typeof exportProgress;
+          return exported.promise;
+        }),
+      });
+      const filters = parsePublicFilters({
+        categories: [{ ...publicFiltersFixture.categories[0], filters: [
+          publicFiltersFixture.categories[0].filters[0],
+          { ...publicFiltersFixture.categories[0].filters[0], id: 'filter-2', displayName: 'Second' },
+        ] }],
+      }).categories[0].filters;
+      const { result } = renderHook(() => useImageSession(filters, () => engine));
+      await act(() => result.current.load(new File([new Uint8Array([1])], 'p.png', { type: 'image/png' })));
+      await act(() => result.current.selectFilter(filters[0]));
+
+      let exportRequest!: Promise<Uint8Array>;
+      let previewRequest!: Promise<void>;
+      act(() => {
+        exportRequest = result.current.exportImage({ type: 'image/png' });
+        previewRequest = result.current.selectFilter(filters[1]);
+        previewProgress({ stage: 'render', value: 0.2 });
+        exportProgress({ stage: 'encode', value: 0.6 });
+      });
+      expect(result.current.busy).toBe(true);
+      expect(result.current.progress).toBe(0.6);
+      expect(result.current.progressStage).toBe('encode');
+
+      if (completionOrder === 'preview-first') {
+        await act(async () => { preview.resolve(older); await previewRequest; });
+        expect(result.current.busy).toBe(true);
+        expect(result.current.progress).toBe(0.6);
+        await act(async () => { exported.resolve(bytes); await exportRequest; });
+      } else {
+        await act(async () => { exported.resolve(bytes); await exportRequest; });
+        expect(result.current.busy).toBe(true);
+        expect(result.current.progress).toBe(0.2);
+        act(() => exportProgress({ stage: 'encode', value: 0.9 }));
+        expect(result.current.progress).toBe(0.2);
+        await act(async () => { preview.resolve(older); await previewRequest; });
+      }
+
+      expect(result.current.busy).toBe(false);
+      expect(result.current.selectedFilter?.id).toBe(filters[1].id);
+      expect(result.current.filteredPreview).toEqual(older);
+      await expect(exportRequest).resolves.toEqual(bytes);
+    },
+  );
+
+  it('does not let a later preview success clear an overlapping export error', async () => {
+    const preview = deferred<PixelBuffer>();
+    const exported = deferred<Uint8Array>();
+    const engine = fakeEngine({
+      renderPreview: vi.fn()
+        .mockResolvedValueOnce(original)
+        .mockResolvedValueOnce(newer)
+        .mockImplementationOnce(() => preview.promise),
+      exportImage: vi.fn(() => exported.promise),
+    });
+    const filters = parsePublicFilters({
+      categories: [{ ...publicFiltersFixture.categories[0], filters: [
+        publicFiltersFixture.categories[0].filters[0],
+        { ...publicFiltersFixture.categories[0].filters[0], id: 'filter-2', displayName: 'Second' },
+      ] }],
+    }).categories[0].filters;
+    const { result } = renderHook(() => useImageSession(filters, () => engine));
+    await act(() => result.current.load(new File([new Uint8Array([1])], 'p.png', { type: 'image/png' })));
+    await act(() => result.current.selectFilter(filters[0]));
+
+    let exportRequest!: Promise<Uint8Array>;
+    let previewRequest!: Promise<void>;
+    act(() => {
+      exportRequest = result.current.exportImage({ type: 'image/png' });
+      previewRequest = result.current.selectFilter(filters[1]);
+    });
+    const rejection = expect(exportRequest).rejects.toThrow('export failed');
+    await act(async () => {
+      exported.reject(new Error('export failed'));
+      await rejection;
+    });
+    expect(result.current.busy).toBe(true);
+    expect(result.current.error).toBe('导出失败。编辑状态已保留，请重试。 (export failed)');
+
+    await act(async () => {
+      preview.resolve(older);
+      await previewRequest;
+    });
+
+    expect(result.current.busy).toBe(false);
+    expect(result.current.selectedFilter?.id).toBe(filters[1].id);
+    expect(result.current.error).toBe('导出失败。编辑状态已保留，请重试。 (export failed)');
   });
 
   it('distinguishes total-pixel and side-length limit errors', async () => {

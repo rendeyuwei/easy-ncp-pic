@@ -217,6 +217,7 @@ export function useImageSession(
     }
     const token = ++loadToken.current;
     renderToken.current++;
+    setPendingFilter(null);
     setBusy(true);
     setError(null);
     setProgress(0);

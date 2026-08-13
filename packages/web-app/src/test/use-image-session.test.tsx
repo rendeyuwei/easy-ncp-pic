@@ -104,6 +104,62 @@ describe('useImageSession', () => {
     expect(result.current.filteredPreview).toEqual(newer);
   });
 
+  it('clears a pending filter as soon as a replacement load supersedes its render', async () => {
+    const pendingRender = deferred<PixelBuffer>();
+    const replacementLoad = deferred<WorkerLoadedImage>();
+    const replacement = { ...loaded, id: 'replacement-image' };
+    const engine = fakeEngine({
+      load: vi.fn()
+        .mockResolvedValueOnce(loaded)
+        .mockImplementationOnce(() => replacementLoad.promise),
+      renderPreview: vi.fn()
+        .mockResolvedValueOnce(original)
+        .mockImplementationOnce(() => pendingRender.promise)
+        .mockResolvedValueOnce(newer),
+    });
+    const filters = parsePublicFilters(publicFiltersFixture).categories[0].filters;
+    const { result } = renderHook(() => useImageSession(filters, () => engine));
+    await act(() => result.current.load(new File([new Uint8Array([1])], 'first.png', { type: 'image/png' })));
+
+    let filterRequest!: Promise<void>;
+    act(() => { filterRequest = result.current.selectFilter(filters[0]); });
+    expect(result.current.pendingFilter?.id).toBe(filters[0].id);
+
+    let replacementRequest!: Promise<void>;
+    act(() => { replacementRequest = result.current.load(new File([new Uint8Array([2])], 'replacement.png', { type: 'image/png' })); });
+    await waitFor(() => expect(engine.load).toHaveBeenCalledTimes(2));
+
+    expect(result.current.pendingFilter).toBeNull();
+
+    await act(async () => { replacementLoad.resolve(replacement); await replacementRequest; });
+    await act(async () => { pendingRender.resolve(older); await filterRequest; });
+  });
+
+  it('clears a pending filter when its replacement load fails', async () => {
+    const pendingRender = deferred<PixelBuffer>();
+    const engine = fakeEngine({
+      load: vi.fn()
+        .mockResolvedValueOnce(loaded)
+        .mockRejectedValueOnce(new Error('replacement load failed')),
+      renderPreview: vi.fn()
+        .mockResolvedValueOnce(original)
+        .mockImplementationOnce(() => pendingRender.promise),
+    });
+    const filters = parsePublicFilters(publicFiltersFixture).categories[0].filters;
+    const { result } = renderHook(() => useImageSession(filters, () => engine));
+    await act(() => result.current.load(new File([new Uint8Array([1])], 'first.png', { type: 'image/png' })));
+
+    let filterRequest!: Promise<void>;
+    act(() => { filterRequest = result.current.selectFilter(filters[0]); });
+    expect(result.current.pendingFilter?.id).toBe(filters[0].id);
+
+    await act(() => result.current.load(new File([new Uint8Array([2])], 'replacement.png', { type: 'image/png' })));
+
+    expect(result.current.pendingFilter).toBeNull();
+
+    await act(async () => { pendingRender.resolve(older); await filterRequest; });
+  });
+
   it('never lets an older image load replace the latest file', async () => {
     const first = deferred<WorkerLoadedImage>();
     const second = deferred<WorkerLoadedImage>();

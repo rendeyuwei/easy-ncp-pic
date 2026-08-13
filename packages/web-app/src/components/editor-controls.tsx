@@ -6,6 +6,7 @@ import { Slider } from './ui/slider';
 export interface EditorControlsProps {
   intensity: number;
   busy: boolean;
+  canAdjustIntensity: boolean;
   canExport: boolean;
   onIntensityChange(value: number): void;
   onCompareChange(showOriginal: boolean): void;
@@ -16,6 +17,7 @@ export interface EditorControlsProps {
 export function EditorControls({
   intensity,
   busy,
+  canAdjustIntensity,
   canExport,
   onIntensityChange,
   onCompareChange,
@@ -58,7 +60,7 @@ export function EditorControls({
           max={100}
           step={1}
           value={[Math.round(intensity * 100)]}
-          disabled={busy}
+          disabled={!canAdjustIntensity}
           onValueChange={([value]) => onIntensityChange((value ?? 0) / 100)}
         />
       </div>

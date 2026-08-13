@@ -77,33 +77,126 @@ describe('useImageSession', () => {
     expect(engine.dispose).toHaveBeenCalledTimes(1);
   });
 
-  it('never lets an older filter render replace the latest selection', async () => {
+  it('coalesces rapid filter selection to the running and latest requests', async () => {
     const first = deferred<PixelBuffer>();
     const second = deferred<PixelBuffer>();
+    const third = deferred<PixelBuffer>();
     const engine = fakeEngine({
       renderPreview: vi.fn()
         .mockResolvedValueOnce(original)
         .mockImplementationOnce(() => first.promise)
-        .mockImplementationOnce(() => second.promise),
+        .mockImplementationOnce(() => second.promise)
+        .mockImplementationOnce(() => third.promise),
     });
     const filters = parsePublicFilters({
       categories: [{ ...publicFiltersFixture.categories[0], filters: [
-        publicFiltersFixture.categories[0].filters[0],
-        { ...publicFiltersFixture.categories[0].filters[0], id: 'filter-2', displayName: 'Second' },
+        { ...publicFiltersFixture.categories[0].filters[0], parsed: {
+          ...publicFiltersFixture.categories[0].filters[0].parsed,
+          saturation: 0,
+        } },
+        { ...publicFiltersFixture.categories[0].filters[0], id: 'filter-2', displayName: 'Second', parsed: {
+          ...publicFiltersFixture.categories[0].filters[0].parsed,
+          saturation: 1,
+        } },
+        { ...publicFiltersFixture.categories[0].filters[0], id: 'filter-3', displayName: 'Third', parsed: {
+          ...publicFiltersFixture.categories[0].filters[0].parsed,
+          saturation: 2,
+        } },
       ] }],
     }).categories[0].filters;
     const { result } = renderHook(() => useImageSession(filters, () => engine));
     await act(() => result.current.load(new File([new Uint8Array([1])], 'p.png', { type: 'image/png' })));
 
-    let oldRequest!: Promise<void>;
-    let newRequest!: Promise<void>;
-    act(() => { oldRequest = result.current.selectFilter(filters[0]); });
-    act(() => { newRequest = result.current.selectFilter(filters[1]); });
-    await act(async () => { second.resolve(newer); await newRequest; });
-    await act(async () => { first.resolve(older); await oldRequest; });
+    let firstRequest!: Promise<void>;
+    let replacedRequest!: Promise<void>;
+    let latestRequest!: Promise<void>;
+    act(() => {
+      firstRequest = result.current.selectFilter(filters[0]);
+      replacedRequest = result.current.selectFilter(filters[1]);
+      latestRequest = result.current.selectFilter(filters[2]);
+    });
+    const callsWhileFirstRuns = vi.mocked(engine.renderPreview).mock.calls.length;
+    let firstSettled = false;
+    let replacedSettled = false;
+    const firstSettlement = firstRequest.then(() => { firstSettled = true; });
+    const replacedSettlement = replacedRequest.then(() => { replacedSettled = true; });
+    await act(async () => { await Promise.resolve(); });
+    const settledBeforeFirst = [firstSettled, replacedSettled];
 
-    expect(result.current.selectedFilter?.id).toBe('filter-2');
+    await act(async () => { first.resolve(older); await first.promise; });
+    await act(async () => { await Promise.resolve(); });
+    const selectedAfterFirst = result.current.selectedFilter;
+    const previewAfterFirst = result.current.filteredPreview;
+    const pendingAfterFirst = result.current.pendingFilter;
+
+    await act(async () => {
+      second.resolve(newer);
+      third.resolve(newer);
+      await Promise.all([
+        firstRequest,
+        replacedRequest,
+        latestRequest,
+        firstSettlement,
+        replacedSettlement,
+      ]);
+    });
+
+    expect(callsWhileFirstRuns).toBe(2);
+    expect(settledBeforeFirst).toEqual([true, true]);
+    expect(vi.mocked(engine.renderPreview).mock.calls.slice(1).map(([, params]) => params.saturation))
+      .toEqual([0, 2]);
+    expect(selectedAfterFirst).toBeNull();
+    expect(previewAfterFirst).toEqual(original);
+    expect(pendingAfterFirst?.id).toBe('filter-3');
+    expect(result.current.selectedFilter?.id).toBe('filter-3');
     expect(result.current.filteredPreview).toEqual(newer);
+    expect(result.current.pendingFilter).toBeNull();
+    expect(result.current.busy).toBe(false);
+  });
+
+  it('retains an intensity change while the first filter preview is pending', async () => {
+    const first = deferred<PixelBuffer>();
+    const latest = deferred<PixelBuffer>();
+    const engine = fakeEngine({
+      renderPreview: vi.fn()
+        .mockResolvedValueOnce(original)
+        .mockImplementationOnce(() => first.promise)
+        .mockImplementationOnce(() => latest.promise),
+    });
+    const filters = parsePublicFilters(publicFiltersFixture).categories[0].filters;
+    const { result } = renderHook(() => useImageSession(filters, () => engine));
+    await act(() => result.current.load(new File([new Uint8Array([1])], 'p.png', { type: 'image/png' })));
+
+    let request!: Promise<void>;
+    act(() => {
+      request = result.current.selectFilter(filters[0]);
+      result.current.setIntensity(0.4);
+    });
+    const intensityWhilePending = result.current.intensity;
+    const selectedWhilePending = result.current.selectedFilter;
+    const previewWhilePending = result.current.filteredPreview;
+
+    await act(async () => {
+      first.resolve(older);
+      await first.promise;
+      await Promise.resolve();
+    });
+    const callsAfterFirst = vi.mocked(engine.renderPreview).mock.calls.length;
+    const latestIntensity = vi.mocked(engine.renderPreview).mock.calls.at(-1)?.[2];
+    await act(async () => {
+      latest.resolve(newer);
+      await request;
+    });
+
+    expect(intensityWhilePending).toBe(0.4);
+    expect(selectedWhilePending).toBeNull();
+    expect(previewWhilePending).toEqual(original);
+    expect(callsAfterFirst).toBe(3);
+    expect(latestIntensity).toBe(0.4);
+    expect(result.current.selectedFilter?.id).toBe(filters[0].id);
+    expect(result.current.filteredPreview).toEqual(newer);
+    expect(result.current.intensity).toBe(0.4);
+    expect(result.current.busy).toBe(false);
   });
 
   it('clears a pending filter as soon as a replacement load supersedes its render', async () => {
@@ -125,16 +218,23 @@ describe('useImageSession', () => {
 
     let filterRequest!: Promise<void>;
     act(() => { filterRequest = result.current.selectFilter(filters[0]); });
+    let filterSettled = false;
+    const filterSettlement = filterRequest.then(() => { filterSettled = true; });
     expect(result.current.pendingFilter?.id).toBe(filters[0].id);
 
     let replacementRequest!: Promise<void>;
     act(() => { replacementRequest = result.current.load(new File([new Uint8Array([2])], 'replacement.png', { type: 'image/png' })); });
     await waitFor(() => expect(engine.load).toHaveBeenCalledTimes(2));
+    await act(async () => { await Promise.resolve(); });
 
     expect(result.current.pendingFilter).toBeNull();
+    expect(filterSettled).toBe(true);
 
     await act(async () => { replacementLoad.resolve(replacement); await replacementRequest; });
-    await act(async () => { pendingRender.resolve(older); await filterRequest; });
+    await act(async () => {
+      pendingRender.resolve(older);
+      await Promise.all([filterRequest, filterSettlement]);
+    });
   });
 
   it('clears a pending filter when its replacement load fails', async () => {
@@ -160,6 +260,99 @@ describe('useImageSession', () => {
     expect(result.current.pendingFilter).toBeNull();
 
     await act(async () => { pendingRender.resolve(older); await filterRequest; });
+  });
+
+  it('settles running and queued filter requests when reset invalidates previews', async () => {
+    const first = deferred<PixelBuffer>();
+    const second = deferred<PixelBuffer>();
+    const engine = fakeEngine({
+      renderPreview: vi.fn()
+        .mockResolvedValueOnce(original)
+        .mockImplementationOnce(() => first.promise)
+        .mockImplementationOnce(() => second.promise),
+    });
+    const filters = parsePublicFilters({
+      categories: [{ ...publicFiltersFixture.categories[0], filters: [
+        publicFiltersFixture.categories[0].filters[0],
+        { ...publicFiltersFixture.categories[0].filters[0], id: 'filter-2', displayName: 'Second' },
+      ] }],
+    }).categories[0].filters;
+    const { result } = renderHook(() => useImageSession(filters, () => engine));
+    await act(() => result.current.load(new File([new Uint8Array([1])], 'p.png', { type: 'image/png' })));
+
+    let firstRequest!: Promise<void>;
+    let secondRequest!: Promise<void>;
+    act(() => {
+      firstRequest = result.current.selectFilter(filters[0]);
+      secondRequest = result.current.selectFilter(filters[1]);
+    });
+    let firstSettled = false;
+    let secondSettled = false;
+    const settlements = [
+      firstRequest.then(() => { firstSettled = true; }),
+      secondRequest.then(() => { secondSettled = true; }),
+    ];
+
+    await act(() => result.current.reset());
+    await act(async () => { await Promise.resolve(); });
+    const settledBeforeRenders = [firstSettled, secondSettled];
+    await act(async () => {
+      first.resolve(older);
+      second.resolve(newer);
+      await Promise.all([firstRequest, secondRequest, ...settlements]);
+    });
+
+    expect(settledBeforeRenders).toEqual([true, true]);
+    expect(result.current.image).toBeNull();
+    expect(result.current.pendingFilter).toBeNull();
+    expect(result.current.busy).toBe(false);
+    expect(engine.renderPreview).toHaveBeenCalledTimes(2);
+  });
+
+  it('settles running and queued filter requests when unmount invalidates previews', async () => {
+    const first = deferred<PixelBuffer>();
+    const second = deferred<PixelBuffer>();
+    const engine = fakeEngine({
+      renderPreview: vi.fn()
+        .mockResolvedValueOnce(original)
+        .mockImplementationOnce(() => first.promise)
+        .mockImplementationOnce(() => second.promise),
+    });
+    const filters = parsePublicFilters({
+      categories: [{ ...publicFiltersFixture.categories[0], filters: [
+        publicFiltersFixture.categories[0].filters[0],
+        { ...publicFiltersFixture.categories[0].filters[0], id: 'filter-2', displayName: 'Second' },
+      ] }],
+    }).categories[0].filters;
+    const { result, unmount } = renderHook(() => useImageSession(filters, () => engine));
+    await act(() => result.current.load(new File([new Uint8Array([1])], 'p.png', { type: 'image/png' })));
+
+    let firstRequest!: Promise<void>;
+    let secondRequest!: Promise<void>;
+    act(() => {
+      firstRequest = result.current.selectFilter(filters[0]);
+      secondRequest = result.current.selectFilter(filters[1]);
+    });
+    let firstSettled = false;
+    let secondSettled = false;
+    const settlements = [
+      firstRequest.then(() => { firstSettled = true; }),
+      secondRequest.then(() => { secondSettled = true; }),
+    ];
+
+    unmount();
+    await act(async () => { await Promise.resolve(); });
+    const settledBeforeRenders = [firstSettled, secondSettled];
+    await act(async () => {
+      first.resolve(older);
+      second.resolve(newer);
+      await Promise.all([firstRequest, secondRequest, ...settlements]);
+    });
+
+    expect(settledBeforeRenders).toEqual([true, true]);
+    expect(engine.disposeImage).toHaveBeenCalledWith(loaded);
+    expect(engine.dispose).toHaveBeenCalledOnce();
+    expect(engine.renderPreview).toHaveBeenCalledTimes(2);
   });
 
   it('never lets an older image load replace the latest file', async () => {
@@ -234,6 +427,8 @@ describe('useImageSession', () => {
 
     expect(result.current.selectedFilter?.id).toBe(filters[0].id);
     expect(result.current.filteredPreview).toEqual(newer);
+    expect(result.current.pendingFilter).toBeNull();
+    expect(result.current.busy).toBe(false);
     expect(result.current.error).toContain('滤镜预览失败');
   });
 

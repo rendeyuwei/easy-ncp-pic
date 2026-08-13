@@ -101,6 +101,26 @@ describe('App editor integration', () => {
     expect(state.requestThumbnails).toHaveBeenCalledWith(categories[0].filters);
   });
 
+  it('keeps strength interactive for a pending first filter while export stays guarded', async () => {
+    const user = userEvent.setup();
+    const state = session({
+      selectedFilter: null,
+      pendingFilter,
+      intensity: 0.4,
+      busy: true,
+    });
+    vi.mocked(useImageSession).mockReturnValue(state);
+
+    render(<App />);
+
+    expect(screen.getByText('40%')).toBeInTheDocument();
+    const intensity = screen.getByRole('slider', { name: '滤镜强度' });
+    intensity.focus();
+    await user.keyboard('{ArrowLeft}');
+    expect(state.setIntensity).toHaveBeenCalledWith(0.39);
+    expect(screen.getByRole('button', { name: '导出' })).toBeDisabled();
+  });
+
   it('shows the original only while the compare control is held', () => {
     render(<App />);
     const compare = screen.getByRole('button', { name: '按住看原图' });

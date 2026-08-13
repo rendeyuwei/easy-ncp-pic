@@ -36,6 +36,13 @@ export interface ImageSessionState {
   reset(): Promise<void>;
 }
 
+interface PreviewRequest {
+  readonly filter: PublicFilter;
+  readonly intensity: number;
+  readonly token: number;
+  resolve(): void;
+}
+
 function identityParams(): FilterParams {
   return {
     schemaVersion: 1,
@@ -101,6 +108,11 @@ export function useImageSession(
   const renderedIntensityRef = useRef(1);
   const loadToken = useRef(0);
   const renderToken = useRef(0);
+  const previewRunning = useRef(false);
+  const runningPreview = useRef<PreviewRequest | null>(null);
+  const queuedPreview = useRef<PreviewRequest | null>(null);
+  const requestedFilterRef = useRef<PublicFilter | null>(null);
+  const requestedIntensityRef = useRef(1);
   const thumbnailGeneration = useRef(0);
   const thumbnailQueue = useRef<PublicFilter[]>([]);
   const thumbnailQueuedIds = useRef(new Set<string>());
@@ -127,47 +139,100 @@ export function useImageSession(
     setProgress((current) => Math.max(current, value));
   }, []);
 
-  const renderSelected = useCallback(async (filter: PublicFilter, nextIntensity: number): Promise<void> => {
-    const activeImage = imageRef.current;
-    if (!activeImage) return;
-    const engine = getEngine();
+  const runPreviewLoop = useCallback(async (): Promise<void> => {
+    if (previewRunning.current) return;
+    previewRunning.current = true;
+    try {
+      while (queuedPreview.current) {
+        const request = queuedPreview.current;
+        queuedPreview.current = null;
+        runningPreview.current = request;
+        const activeImage = imageRef.current;
+        if (!activeImage || request.token !== renderToken.current) {
+          request.resolve();
+          continue;
+        }
+
+        let preview: PixelBuffer | null = null;
+        let renderError: unknown = null;
+        try {
+          preview = await getEngine().renderPreview(
+            activeImage,
+            toFilterParams(request.filter),
+            request.intensity,
+            previewLongEdge(),
+            { onProgress: (event) => {
+              if (request.token === renderToken.current) updateProgress(event);
+            } },
+          );
+        } catch (error) {
+          renderError = error;
+        }
+
+        if (runningPreview.current === request) runningPreview.current = null;
+        if (
+          request.token !== renderToken.current
+          || imageRef.current?.id !== activeImage.id
+          || queuedPreview.current
+        ) {
+          request.resolve();
+          continue;
+        }
+
+        if (preview) {
+          setFilteredPreview(preview);
+          renderedFilterRef.current = request.filter;
+          renderedIntensityRef.current = request.intensity;
+          selectedRef.current = request.filter;
+          intensityRef.current = request.intensity;
+          requestedFilterRef.current = request.filter;
+          requestedIntensityRef.current = request.intensity;
+          setSelectedFilter(request.filter);
+          setIntensityState(request.intensity);
+        } else {
+          requestedFilterRef.current = renderedFilterRef.current;
+          requestedIntensityRef.current = renderedIntensityRef.current;
+          selectedRef.current = renderedFilterRef.current;
+          intensityRef.current = renderedIntensityRef.current;
+          setSelectedFilter(renderedFilterRef.current);
+          setIntensityState(renderedIntensityRef.current);
+          setError(userError(renderError, 'render'));
+        }
+        setPendingFilter(null);
+        setBusy(false);
+        request.resolve();
+      }
+    } finally {
+      runningPreview.current = null;
+      previewRunning.current = false;
+    }
+  }, [getEngine, updateProgress]);
+
+  const queuePreview = useCallback((filter: PublicFilter, nextIntensity: number): Promise<void> => {
+    if (!imageRef.current) return Promise.resolve();
+    requestedFilterRef.current = filter;
+    requestedIntensityRef.current = nextIntensity;
     const token = ++renderToken.current;
+    setPendingFilter(filter);
     setBusy(true);
     setError(null);
     setProgress(0);
-    try {
-      const preview = await engine.renderPreview(
-        activeImage,
-        toFilterParams(filter),
-        nextIntensity,
-        previewLongEdge(),
-        { onProgress: (event) => {
-          if (token === renderToken.current) updateProgress(event);
-        } },
-      );
-      if (token === renderToken.current) {
-        setFilteredPreview(preview);
-        renderedFilterRef.current = filter;
-        renderedIntensityRef.current = nextIntensity;
-        selectedRef.current = filter;
-        setSelectedFilter(filter);
-        setPendingFilter(null);
-        intensityRef.current = nextIntensity;
-        setIntensityState(nextIntensity);
-      }
-    } catch (renderError) {
-      if (token === renderToken.current) {
-        selectedRef.current = renderedFilterRef.current;
-        setSelectedFilter(renderedFilterRef.current);
-        intensityRef.current = renderedIntensityRef.current;
-        setIntensityState(renderedIntensityRef.current);
-        setPendingFilter(null);
-        setError(userError(renderError, 'render'));
-      }
-    } finally {
-      if (token === renderToken.current) setBusy(false);
-    }
-  }, [getEngine, updateProgress]);
+    return new Promise<void>((resolve) => {
+      runningPreview.current?.resolve();
+      queuedPreview.current?.resolve();
+      queuedPreview.current = { filter, intensity: nextIntensity, token, resolve };
+      void runPreviewLoop();
+    });
+  }, [runPreviewLoop]);
+
+  const invalidatePreviews = useCallback((): void => {
+    renderToken.current++;
+    runningPreview.current?.resolve();
+    queuedPreview.current?.resolve();
+    queuedPreview.current = null;
+    requestedFilterRef.current = renderedFilterRef.current;
+    requestedIntensityRef.current = renderedIntensityRef.current;
+  }, []);
 
   const pumpThumbnails = useCallback(async (): Promise<void> => {
     if (thumbnailRunning.current) return;
@@ -235,7 +300,7 @@ export function useImageSession(
 
   const reset = useCallback(async (): Promise<void> => {
     loadToken.current++;
-    renderToken.current++;
+    invalidatePreviews();
     thumbnailGeneration.current++;
     thumbnailQueue.current = [];
     thumbnailQueuedIds.current.clear();
@@ -247,6 +312,8 @@ export function useImageSession(
     intensityRef.current = 1;
     renderedFilterRef.current = null;
     renderedIntensityRef.current = 1;
+    requestedFilterRef.current = null;
+    requestedIntensityRef.current = 1;
     setImage(null);
     setFileName('');
     setSelectedFilter(null);
@@ -261,7 +328,7 @@ export function useImageSession(
     setBusy(false);
     setError(null);
     if (active) await getEngine().disposeImage(active);
-  }, [getEngine]);
+  }, [getEngine, invalidatePreviews]);
 
   const load = useCallback(async (file: File): Promise<void> => {
     if (!accepts(file)) {
@@ -269,12 +336,13 @@ export function useImageSession(
       return;
     }
     const token = ++loadToken.current;
-    renderToken.current++;
+    invalidatePreviews();
     thumbnailGeneration.current++;
     thumbnailQueue.current = [];
     thumbnailQueuedIds.current.clear();
     thumbnailImageId.current = null;
     setPendingFilter(null);
+    setIntensityState(renderedIntensityRef.current);
     setThumbnails(new Map());
     setThumbnailLoading(new Set());
     setBusy(true);
@@ -310,6 +378,8 @@ export function useImageSession(
       setIntensityState(1);
       renderedFilterRef.current = null;
       renderedIntensityRef.current = 1;
+      requestedFilterRef.current = null;
+      requestedIntensityRef.current = 1;
       setOriginalPreview(preview);
       setFilteredPreview(preview);
       setProgress(1);
@@ -325,12 +395,11 @@ export function useImageSession(
       if (loaded && !committed && engine) await engine.disposeImage(loaded).catch(() => undefined);
       if (token === loadToken.current) setBusy(false);
     }
-  }, [enqueueThumbnails, getEngine, updateProgress]);
+  }, [enqueueThumbnails, getEngine, invalidatePreviews, updateProgress]);
 
-  const selectFilter = useCallback(async (filter: PublicFilter): Promise<void> => {
-    setPendingFilter(filter);
-    await renderSelected(filter, intensityRef.current);
-  }, [renderSelected]);
+  const selectFilter = useCallback((filter: PublicFilter): Promise<void> => (
+    queuePreview(filter, requestedIntensityRef.current)
+  ), [queuePreview]);
 
   const requestThumbnails = useCallback((requestedFilters: ReadonlyArray<PublicFilter>): void => {
     latestThumbnailFilters.current = [...requestedFilters];
@@ -339,10 +408,11 @@ export function useImageSession(
 
   const setIntensity = useCallback((value: number): void => {
     const next = Math.min(1, Math.max(0, value));
-    intensityRef.current = next;
+    requestedIntensityRef.current = next;
     setIntensityState(next);
-    if (selectedRef.current) void renderSelected(selectedRef.current, next);
-  }, [renderSelected]);
+    const filter = requestedFilterRef.current;
+    if (filter) void queuePreview(filter, next);
+  }, [queuePreview]);
 
   const exportImage = useCallback(async (options: ExportOptions): Promise<Uint8Array> => {
     const activeImage = imageRef.current;
@@ -369,7 +439,7 @@ export function useImageSession(
 
   useEffect(() => () => {
     loadToken.current++;
-    renderToken.current++;
+    invalidatePreviews();
     thumbnailGeneration.current++;
     thumbnailQueue.current = [];
     thumbnailQueuedIds.current.clear();
@@ -381,7 +451,7 @@ export function useImageSession(
     engineRef.current = null;
     if (active && engine) void engine.disposeImage(active);
     engine?.dispose();
-  }, []);
+  }, [invalidatePreviews]);
 
   return {
     image,

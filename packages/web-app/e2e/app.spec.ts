@@ -44,7 +44,30 @@ const publicFilters = {
   ],
 };
 
-async function installApi(page: Page, requests: Request[], status = 200): Promise<void> {
+const rapidFilters = {
+  ...publicFilters,
+  categories: [{
+    ...publicFilters.categories[0],
+    filters: ['A', 'B', 'C'].map((name) => ({
+      ...publicFilters.categories[0].filters[0],
+      id: `filter-${name.toLowerCase()}`,
+      slug: `filter-${name.toLowerCase()}`,
+      displayName: `Filter ${name}`,
+      sourceName: `Filter ${name}`,
+      parsed: {
+        ...publicFilters.categories[0].filters[0].parsed,
+        sourceName: `Filter ${name}`,
+      },
+    })),
+  }],
+};
+
+async function installApi(
+  page: Page,
+  requests: Request[],
+  status = 200,
+  filters = publicFilters,
+): Promise<void> {
   page.on('request', (request) => requests.push(request));
   await page.route('**/api/filters', async (route) => {
     if (status !== 200) {
@@ -54,8 +77,41 @@ async function installApi(page: Page, requests: Request[], status = 200): Promis
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify(publicFilters),
+      body: JSON.stringify(filters),
     });
+  });
+}
+
+async function delayWorkerMessages(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    // Keep the production Worker and renderer, but hold its replies long enough to
+    // exercise the user interaction that occurs while the preview is pending.
+    const NativeWorker = window.Worker;
+    const listenerMap = new WeakMap<Worker, Map<EventListenerOrEventListenerObject, EventListener>>();
+
+    window.Worker = class DelayedWorker extends NativeWorker {
+      addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void {
+        if (type !== 'message') {
+          super.addEventListener(type, listener, options);
+          return;
+        }
+        const delayed = (event: Event): void => {
+          window.setTimeout(() => {
+            if (typeof listener === 'function') listener.call(this, event);
+            else listener.handleEvent(event);
+          }, 100);
+        };
+        const listeners = listenerMap.get(this) ?? new Map();
+        listeners.set(listener, delayed);
+        listenerMap.set(this, listeners);
+        super.addEventListener(type, delayed, options);
+      }
+
+      removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void {
+        const delayed = listenerMap.get(this)?.get(listener);
+        super.removeEventListener(type, delayed ?? listener, options);
+      }
+    };
   });
 }
 
@@ -63,23 +119,24 @@ async function openEditor(page: Page, file = 'photo.png'): Promise<void> {
   await page.goto('/');
   await page.getByLabel('选择一张照片').setInputFiles(`e2e/fixtures/${file}`);
   await expect(page.getByRole('heading', { name: '选择一个滤镜' })).toBeVisible();
-  await page.getByRole('button', { name: /Fuji Astia/ }).click();
-  await expect(page.getByRole('heading', { name: 'Fuji Astia' })).toBeVisible();
 }
 
 test.describe('EasyPic local editor', () => {
   test('uploads PNG, edits locally and downloads original dimensions', async ({ page }) => {
     const requests: Request[] = [];
     await installApi(page, requests);
+    await delayWorkerMessages(page);
     await openEditor(page);
-    const requestsAfterSelection = requests.length;
-    await page.getByRole('button', { name: /Fuji Astia/ }).click();
-    await expect.poll(() => requests.length).toBe(requestsAfterSelection);
 
-    await expect(page.getByLabel('Fuji Astia 滤镜预览')).toBeVisible();
+    await page.getByRole('button', { name: /Fuji Astia/ }).click();
+    await expect(page.getByRole('status').filter({ hasText: '正在应用 Fuji Astia' }))
+      .toContainText('正在应用 Fuji Astia');
+
     const intensity = page.getByRole('slider', { name: '滤镜强度' });
     await intensity.press('ArrowLeft');
+    await expect(page.getByRole('heading', { name: 'Fuji Astia' })).toBeVisible();
     await expect(page.getByText('99%')).toBeVisible();
+    await expect(page.getByLabel('Fuji Astia 滤镜预览')).toBeVisible();
 
     const compare = page.getByTestId('compare-surface');
     const box = await compare.boundingBox();
@@ -111,9 +168,32 @@ test.describe('EasyPic local editor', () => {
     expect(requests.some((request) => request.postData()?.includes('photo.png'))).toBe(false);
   });
 
+  test('coalesces rapid filter selections so only the latest filter commits', async ({ page }) => {
+    await installApi(page, [], 200, rapidFilters);
+    await delayWorkerMessages(page);
+    await openEditor(page);
+
+    const filterA = page.getByRole('button', { name: /Filter A/ });
+    const filterB = page.getByRole('button', { name: /Filter B/ });
+    const filterC = page.getByRole('button', { name: /Filter C/ });
+    await filterA.click();
+    await expect(page.getByRole('status').filter({ hasText: '正在应用 Filter A' }))
+      .toContainText('正在应用 Filter A');
+    await filterB.click();
+    await filterC.click();
+
+    await expect(page.getByRole('heading', { name: 'Filter C' })).toBeVisible();
+    await expect(filterA).toHaveAttribute('aria-pressed', 'false');
+    await expect(filterB).toHaveAttribute('aria-pressed', 'false');
+    await expect(filterC).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByRole('status').filter({ hasText: /正在/ })).toHaveCount(0);
+  });
+
   test('JPEG export defaults to JPG quality 92%', async ({ page }) => {
     await installApi(page, []);
     await openEditor(page, 'photo.jpg');
+    await page.getByRole('button', { name: /Fuji Astia/ }).click();
+    await expect(page.getByRole('heading', { name: 'Fuji Astia' })).toBeVisible();
 
     await page.getByRole('button', { name: '导出' }).click();
 
@@ -125,6 +205,8 @@ test.describe('EasyPic local editor', () => {
     await page.emulateMedia({ reducedMotion: 'reduce' });
     await installApi(page, []);
     await openEditor(page);
+    await page.getByRole('button', { name: /Fuji Astia/ }).click();
+    await expect(page.getByRole('heading', { name: 'Fuji Astia' })).toBeVisible();
 
     const preview = page.locator('.preview-panel');
     const filters = page.locator('.filter-rail');

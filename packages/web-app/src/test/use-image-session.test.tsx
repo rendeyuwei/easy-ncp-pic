@@ -1091,6 +1091,95 @@ describe('useImageSession', () => {
     await expect(firstRequest).resolves.toEqual(firstBytes);
   });
 
+  it.each(['resolves', 'rejects'] as const)(
+    'keeps a reset-invalidated physical export guarded until it %s',
+    async (firstOutcome) => {
+      const first = deferred<Uint8Array>();
+      const second = deferred<Uint8Array>();
+      const third = deferred<Uint8Array>();
+      const replacement = { ...loaded, id: 'replacement-image' };
+      const finalBytes = new Uint8Array([7, 7, 7]);
+      const engine = fakeEngine({
+        load: vi.fn()
+          .mockResolvedValueOnce(loaded)
+          .mockResolvedValueOnce(replacement),
+        renderPreview: vi.fn()
+          .mockResolvedValueOnce(original)
+          .mockResolvedValueOnce(newer)
+          .mockResolvedValueOnce(older)
+          .mockResolvedValueOnce(newer),
+        exportImage: vi.fn()
+          .mockImplementationOnce(() => first.promise)
+          .mockImplementationOnce(() => second.promise)
+          .mockImplementationOnce(() => third.promise),
+      });
+      const filters = parsePublicFilters(publicFiltersFixture).categories[0].filters;
+      const { result } = renderHook(() => useImageSession(filters, () => engine));
+      await act(() => result.current.load(new File([new Uint8Array([1])], 'first.png', { type: 'image/png' })));
+      await act(() => result.current.selectFilter(filters[0]));
+
+      let firstRequest!: Promise<Uint8Array>;
+      act(() => { firstRequest = result.current.exportImage({ type: 'image/png' }); });
+      const firstSettlement = firstRequest.then(
+        () => 'resolved' as const,
+        () => 'rejected' as const,
+      );
+      await act(() => result.current.reset());
+      expect(result.current.exporting).toBe(false);
+      expect(result.current.busy).toBe(false);
+
+      await act(() => result.current.load(
+        new File([new Uint8Array([2])], 'replacement.png', { type: 'image/png' }),
+      ));
+      await act(() => result.current.selectFilter(filters[0]));
+
+      let guardedRequest!: Promise<Uint8Array>;
+      act(() => { guardedRequest = result.current.exportImage({ type: 'image/jpeg', quality: 0.8 }); });
+      let guardMessage: string | null = null;
+      const guardedSettlement = guardedRequest.catch((error: unknown) => {
+        guardMessage = error instanceof Error ? error.message : String(error);
+      });
+      await act(async () => { await Promise.resolve(); });
+      const guardedBeforeFirstSettles = guardMessage;
+      if (guardedBeforeFirstSettles === null) {
+        await act(async () => { second.resolve(finalBytes); await guardedRequest; });
+      }
+
+      expect(guardedBeforeFirstSettles).toBe('已有导出任务正在进行。');
+      expect(engine.exportImage).toHaveBeenCalledOnce();
+      expect(result.current.exporting).toBe(false);
+      expect(result.current.busy).toBe(false);
+      expect(result.current.error).toBeNull();
+
+      const firstError = new Error('old export failed');
+      await act(async () => {
+        if (firstOutcome === 'resolves') first.resolve(new Uint8Array([1]));
+        else first.reject(firstError);
+        expect(await firstSettlement).toBe(firstOutcome === 'resolves' ? 'resolved' : 'rejected');
+        await guardedSettlement;
+      });
+      expect(result.current.error).toBeNull();
+
+      let finalRequest!: Promise<Uint8Array>;
+      act(() => { finalRequest = result.current.exportImage({ type: 'image/png' }); });
+      expect(result.current.exporting).toBe(true);
+      expect(result.current.busy).toBe(true);
+      expect(engine.exportImage).toHaveBeenCalledTimes(2);
+
+      await act(async () => {
+        second.resolve(finalBytes);
+        third.resolve(finalBytes);
+        await finalRequest;
+      });
+      await expect(finalRequest).resolves.toEqual(finalBytes);
+      expect(result.current.exporting).toBe(false);
+      expect(result.current.busy).toBe(false);
+      expect(result.current.error).toBeNull();
+      expect(result.current.image).toEqual(replacement);
+      expect(result.current.selectedFilter?.id).toBe(filters[0].id);
+    },
+  );
+
   it('distinguishes total-pixel and side-length limit errors', async () => {
     const filters = parsePublicFilters(publicFiltersFixture).categories[0].filters;
     const totalEngine = fakeEngine({ load: vi.fn().mockRejectedValue(new Error('Image total 85500000 pixels exceeds the 80000000 pixel limit')) });

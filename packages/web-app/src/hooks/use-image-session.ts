@@ -148,6 +148,7 @@ export function useImageSession(
   const renderToken = useRef(0);
   const exportToken = useRef(0);
   const activeExportToken = useRef<number | null>(null);
+  const physicalExportInFlight = useRef(false);
   const previewRunning = useRef(false);
   const runningPreview = useRef<PreviewRequest | null>(null);
   const queuedPreview = useRef<PreviewRequest | null>(null);
@@ -500,13 +501,14 @@ export function useImageSession(
   }, [queuePreview]);
 
   const exportImage = useCallback(async (options: ExportOptions): Promise<Uint8Array> => {
-    if (activeExportToken.current !== null) throw new Error('已有导出任务正在进行。');
+    if (physicalExportInFlight.current) throw new Error('已有导出任务正在进行。');
     const activeImage = imageRef.current;
     const selection = committedSelectionRef.current;
     const filter = selection.filter;
     if (!activeImage || !filter) throw new Error('请先选择一个滤镜。');
     const engine = getEngine();
     const token = ++exportToken.current;
+    physicalExportInFlight.current = true;
     activeExportToken.current = token;
     beginOperation('export', token);
     let exportErrorMessage: string | null = null;
@@ -523,6 +525,7 @@ export function useImageSession(
       exportErrorMessage = userError(exportError, 'export');
       throw exportError;
     } finally {
+      physicalExportInFlight.current = false;
       if (token === exportToken.current) {
         activeExportToken.current = null;
         finishOperation('export', token, { error: exportErrorMessage });

@@ -10,7 +10,7 @@ import {
   DialogTitle,
 } from '../../components/ui/dialog';
 import { Field } from '../../components/ui/field';
-import { type FilterCreateInput } from '../../lib/admin-client';
+import { ApiFailure, type FilterCreateInput } from '../../lib/admin-client';
 import type { AdminCategory, AdminFilter } from '../../lib/api-schema';
 import {
   NcpInspectionError,
@@ -137,7 +137,9 @@ export function FilterCreateDialog({
     } catch (error) {
       const mapped = mapFilterCreateError(error);
       setErrors(mapped.fields);
-      setSummary(mapped.summary);
+      setSummary(error instanceof ApiFailure && (error.status === 0 || error.code === 'NETWORK_ERROR')
+        ? '保存失败，请重试'
+        : mapped.summary);
     }
   };
 

@@ -361,6 +361,19 @@ describe('local-first filter creation', () => {
     expect(posts).toBe(1);
   });
 
+  it('keeps the single-create network failure copy separate from bulk pause copy', async () => {
+    server.use(http.post('/api/admin/filters', () => HttpResponse.error()));
+    const { user } = renderFilters();
+    const dialog = await openCreate();
+    await user.upload(within(dialog).getByLabelText('NCP 文件'), ncpFile());
+    await within(dialog).findByText('Fuji Astia');
+    await user.click(within(dialog).getByRole('button', { name: '保存滤镜' }));
+
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('保存失败，请重试');
+    expect(dialog).not.toHaveTextContent('网络连接中断，导入已暂停');
+    expect(within(dialog).getByText('Neutral')).toBeInTheDocument();
+  });
+
   it('keeps recoverable state without exposing unmatched server validation text', async () => {
     server.use(http.post('/api/admin/filters', () => HttpResponse.json({
       code: 'VALIDATION_ERROR',

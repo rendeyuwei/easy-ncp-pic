@@ -332,7 +332,10 @@ test.describe('EasyPic local editor', () => {
         expect.objectContaining({ saturation: 11, intensity: 1 }),
         expect.objectContaining({ saturation: 33, intensity: 1 }),
       ]);
-    expect((await workerGateSnapshot(page)).committedHeadings).not.toContain('Filter B');
+    const committedHeadings = (await workerGateSnapshot(page)).committedHeadings;
+    expect(committedHeadings).toContain('选择一个滤镜');
+    expect(committedHeadings).toContain('Filter C');
+    expect(committedHeadings.every((heading) => heading === '选择一个滤镜' || heading === 'Filter C')).toBe(true);
   });
 
   test('JPEG export defaults to JPG quality 92%', async ({ page }) => {

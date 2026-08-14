@@ -360,6 +360,9 @@ export function useImageSession(
   const enqueueThumbnails = useCallback((requestedFilters: ReadonlyArray<PublicFilter>): void => {
     const activeImage = imageRef.current;
     if (!activeImage || thumbnailImageId.current !== activeImage.id) return;
+    const replacedIds = thumbnailQueue.current.map((filter) => filter.id);
+    thumbnailQueue.current = [];
+    for (const id of replacedIds) thumbnailQueuedIds.current.delete(id);
     const addedIds: string[] = [];
     for (const filter of requestedFilters) {
       if (thumbnailQueuedIds.current.has(filter.id)) continue;
@@ -367,13 +370,14 @@ export function useImageSession(
       thumbnailQueue.current.push(filter);
       addedIds.push(filter.id);
     }
-    if (addedIds.length === 0) return;
+    if (replacedIds.length === 0 && addedIds.length === 0) return;
     setThumbnailLoading((current) => {
       const next = new Set(current);
+      for (const id of replacedIds) next.delete(id);
       for (const id of addedIds) next.add(id);
       return next;
     });
-    void pumpThumbnails();
+    if (addedIds.length > 0) void pumpThumbnails();
   }, [pumpThumbnails]);
 
   const reset = useCallback(async (): Promise<void> => {

@@ -59,6 +59,7 @@ describe('PhotoCompare', () => {
   it('converts pointer positions to a clamped percentage', () => {
     render(<PhotoCompare original={original} filtered={filtered} showOriginal={false} />);
     const surface = screen.getByTestId('compare-surface');
+    const filteredLayer = screen.getByTestId('filtered-layer');
     vi.spyOn(surface, 'getBoundingClientRect').mockReturnValue({
       left: 20,
       right: 220,
@@ -73,8 +74,10 @@ describe('PhotoCompare', () => {
 
     fireEvent.pointerDown(surface, { clientX: 170, pointerId: 1 });
     expect(screen.getByRole('slider')).toHaveAttribute('aria-valuenow', '75');
+    expect(filteredLayer).toHaveStyle({ clipPath: 'inset(0 0 0 75%)' });
     fireEvent.pointerMove(surface, { clientX: 300, pointerId: 1 });
     expect(screen.getByRole('slider')).toHaveAttribute('aria-valuenow', '100');
+    expect(filteredLayer).toHaveStyle({ clipPath: 'inset(0 0 0 100%)' });
     fireEvent.pointerUp(surface, { pointerId: 1 });
   });
 

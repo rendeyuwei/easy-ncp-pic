@@ -655,6 +655,55 @@ describe('useImageSession', () => {
     expect([...result.current.thumbnails.keys()]).toEqual(filters.map((filter) => filter.id));
   });
 
+  it('renders the latest visible category before queued hidden-category thumbnails', async () => {
+    const first = deferred<PixelBuffer>();
+    const next = deferred<PixelBuffer>();
+    const engine = fakeEngine({
+      renderThumbnail: vi.fn()
+        .mockImplementationOnce(() => first.promise)
+        .mockImplementationOnce(() => next.promise),
+    });
+    const baseCategory = publicFiltersFixture.categories[0];
+    const baseFilter = baseCategory.filters[0];
+    const categories = parsePublicFilters({
+      categories: [
+        { ...baseCategory, id: 'category-a', slug: 'category-a', filters: [
+          { ...baseFilter, id: 'a-1', parsed: { ...baseFilter.parsed, saturation: 0 } },
+          { ...baseFilter, id: 'a-2', parsed: { ...baseFilter.parsed, saturation: 1 } },
+          { ...baseFilter, id: 'a-3', parsed: { ...baseFilter.parsed, saturation: 2 } },
+        ] },
+        { ...baseCategory, id: 'category-b', slug: 'category-b', filters: [
+          { ...baseFilter, id: 'b-1', parsed: { ...baseFilter.parsed, saturation: 3 } },
+        ] },
+      ],
+    }).categories;
+    const categoryA = categories[0].filters;
+    const categoryB = categories[1].filters;
+    const { result } = renderHook(() => useImageSession([...categoryA, ...categoryB], () => engine));
+    await act(() => result.current.load(new File([new Uint8Array([1])], 'p.png', { type: 'image/png' })));
+
+    act(() => result.current.requestThumbnails(categoryA));
+    expect(engine.renderThumbnail).toHaveBeenCalledOnce();
+
+    act(() => result.current.requestThumbnails(categoryB));
+    expect(engine.renderThumbnail).toHaveBeenCalledOnce();
+
+    await act(async () => { first.resolve(original); await first.promise; });
+    await waitFor(() => expect(engine.renderThumbnail).toHaveBeenCalledTimes(2));
+
+    expect(engine.renderThumbnail).toHaveBeenNthCalledWith(
+      2,
+      loaded,
+      expect.objectContaining({ saturation: 3 }),
+      96,
+    );
+    expect(vi.mocked(engine.renderThumbnail).mock.calls.map(([, params]) => params.saturation)).toEqual([0, 3]);
+
+    await act(async () => { next.resolve(newer); await next.promise; });
+    await waitFor(() => expect(result.current.thumbnailLoading.size).toBe(0));
+    expect(engine.renderThumbnail).toHaveBeenCalledTimes(2);
+  });
+
   it('deduplicates a thumbnail ID queued behind another filter', async () => {
     const first = deferred<PixelBuffer>();
     const engine = fakeEngine({

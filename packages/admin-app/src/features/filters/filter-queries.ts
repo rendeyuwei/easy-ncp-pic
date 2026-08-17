@@ -1,7 +1,14 @@
+import { useCallback, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ApiFailure, type FilterCreateInput, type FilterPatch } from '../../lib/admin-client';
 import { useSession } from '../../session/session-provider';
 import { queryKeys } from '../query-keys';
+import {
+  runBulkFilterImport,
+  type BulkFilterRow,
+  type BulkFilterRowUpdater,
+  type BulkImportRunResult,
+} from './filter-bulk-import';
 
 function isTransient(error: unknown): boolean {
   if (!(error instanceof ApiFailure)) return false;
@@ -34,6 +41,36 @@ export function useCreateFilter() {
     retry: false,
     onSuccess: invalidate,
   });
+}
+
+export function useBulkCreateFilters(): {
+  run(rows: readonly BulkFilterRow[], onRow: BulkFilterRowUpdater): Promise<BulkImportRunResult>;
+  isPending: boolean;
+} {
+  const { api } = useSession();
+  const queryClient = useQueryClient();
+  const activeRuns = useRef(0);
+  const [isPending, setIsPending] = useState(false);
+
+  const run = useCallback(async (
+    rows: readonly BulkFilterRow[],
+    onRow: BulkFilterRowUpdater,
+  ): Promise<BulkImportRunResult> => {
+    activeRuns.current += 1;
+    setIsPending(true);
+    try {
+      const result = await runBulkFilterImport(rows, (input) => api.createFilter(input), onRow);
+      if (result.createdCount > 0) {
+        await queryClient.invalidateQueries({ queryKey: queryKeys.filters });
+      }
+      return result;
+    } finally {
+      activeRuns.current -= 1;
+      if (activeRuns.current === 0) setIsPending(false);
+    }
+  }, [api, queryClient]);
+
+  return { run, isPending };
 }
 
 export function useUpdateFilter() {

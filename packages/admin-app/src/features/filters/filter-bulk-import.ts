@@ -4,7 +4,8 @@ import {
   inspectNcpFile,
   type NcpInspection,
 } from '../../lib/ncp-inspector';
-import { ncpInspectionMessage } from './filter-form';
+import { ApiFailure, type FilterCreateInput } from '../../lib/admin-client';
+import { filterClientErrors, mapFilterCreateError, ncpInspectionMessage } from './filter-form';
 
 export const MAX_BULK_FILTER_FILES = 100;
 
@@ -30,6 +31,20 @@ export interface BulkFilterDefaults {
   isEnabled: boolean;
   startingSortOrder: number;
 }
+
+export interface BulkFilterRowUpdate {
+  status: BulkFilterStatus;
+  message: string | null;
+}
+
+export interface BulkImportRunResult {
+  createdCount: number;
+  failedCount: number;
+  paused: boolean;
+}
+
+export type BulkFilterCreate = (input: FilterCreateInput) => Promise<unknown>;
+export type BulkFilterRowUpdater = (id: string, update: BulkFilterRowUpdate) => void;
 
 function invalidRow(file: File, index: number, defaults: BulkFilterDefaults, error: unknown): BulkFilterRow {
   return {
@@ -95,4 +110,61 @@ export async function inspectBulkFilterFiles(
     seenBase64.add(row.ncpBase64);
     return row;
   });
+}
+
+export function toFilterCreateInput(row: BulkFilterRow): FilterCreateInput | null {
+  if (!row.ncpBase64) return null;
+
+  const errors = filterClientErrors({
+    displayName: row.displayName,
+    categoryId: row.categoryId,
+    description: '',
+    slug: '',
+    sortOrder: row.sortOrder,
+  });
+  if (Object.keys(errors).length > 0) return null;
+
+  return {
+    ncpBase64: row.ncpBase64,
+    displayName: row.displayName.trim(),
+    categoryId: row.categoryId,
+    sortOrder: Number(row.sortOrder),
+    isEnabled: row.isEnabled,
+  };
+}
+
+export async function runBulkFilterImport(
+  rows: readonly BulkFilterRow[],
+  create: BulkFilterCreate,
+  onRow: BulkFilterRowUpdater,
+): Promise<BulkImportRunResult> {
+  let createdCount = 0;
+  let failedCount = 0;
+
+  for (const row of rows) {
+    if (row.status !== 'ready' && row.status !== 'failed') continue;
+    const input = toFilterCreateInput(row);
+    if (input === null) continue;
+
+    onRow(row.id, { status: 'importing', message: null });
+    try {
+      await create(input);
+      onRow(row.id, { status: 'success', message: '已导入' });
+      createdCount += 1;
+    } catch (error) {
+      failedCount += 1;
+      const mapped = mapFilterCreateError(error);
+      onRow(row.id, {
+        status: error instanceof ApiFailure && error.code === 'DUPLICATE_NCP'
+          ? 'duplicate'
+          : 'failed',
+        message: mapped.summary ?? Object.values(mapped.fields)[0] ?? '导入失败，请重试',
+      });
+      if (error instanceof ApiFailure && error.status === 0) {
+        return { createdCount, failedCount, paused: true };
+      }
+    }
+  }
+
+  return { createdCount, failedCount, paused: false };
 }

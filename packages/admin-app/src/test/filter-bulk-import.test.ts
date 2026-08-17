@@ -65,7 +65,10 @@ async function readyRows(count: number): Promise<BulkFilterRow[]> {
   }));
 }
 
-function createApi(createFilter: AdminApi['createFilter']): AdminApi {
+function createApi(
+  createFilter: AdminApi['createFilter'],
+  listFilters: AdminApi['listFilters'] = vi.fn(async () => []),
+): AdminApi {
   return {
     setUnauthorizedHandler: vi.fn(),
     restoreSession: vi.fn(async () => undefined),
@@ -75,7 +78,7 @@ function createApi(createFilter: AdminApi['createFilter']): AdminApi {
     createCategory: vi.fn(async () => categoryFixture),
     updateCategory: vi.fn(async () => categoryFixture),
     deleteCategory: vi.fn(async () => undefined),
-    listFilters: vi.fn(async () => []),
+    listFilters,
     createFilter,
     updateFilter: vi.fn(async () => filterFixture),
     deleteFilter: vi.fn(async () => undefined),
@@ -107,7 +110,11 @@ describe('inspectBulkFilterFiles', () => {
     ]);
     expect(rows.map((row) => row.isEnabled)).toEqual([true, true]);
     expect(rows.map((row) => row.status)).toEqual(['ready', 'ready']);
-    expect(rows.map((row) => row.retryable)).toEqual([true, true]);
+    expect(rows.map((row) => row.ncpSha256)).toEqual([
+      'ed53222f4a2329c3f42a2dd6391b4b62d1214b1e3eac917d9bd11a8f22f9e43f',
+      '5a3e2e9a768234f0fa653f1fc50eef3993118788737e57fe4bbd8d219fa8bc12',
+    ]);
+    expect(rows.map((row) => row.remedy)).toEqual(['none', 'none']);
     expect(rows.map((row) => row.categoryOverridden)).toEqual([false, false]);
     expect(rows.map((row) => row.enabledOverridden)).toEqual([false, false]);
   });
@@ -129,7 +136,8 @@ describe('inspectBulkFilterFiles', () => {
     ]);
     expect(rows[1]?.inspection).toBeNull();
     expect(rows[1]?.ncpBase64).toBeNull();
-    expect(rows[1]?.retryable).toBe(false);
+    expect(rows[1]?.ncpSha256).toBeNull();
+    expect(rows[1]?.remedy).toBe('none');
   });
 
   it('marks only later byte-identical files as duplicates', async () => {
@@ -138,9 +146,9 @@ describe('inspectBulkFilterFiles', () => {
       fixtureFile(fixture02, 'two.NCP'),
     ], defaults);
 
-    expect(rows.map((row) => [row.fileName, row.status, row.ncpBase64 === null, row.retryable])).toEqual([
-      ['one.NCP', 'ready', false, true],
-      ['two.NCP', 'duplicate', false, false],
+    expect(rows.map((row) => [row.fileName, row.status, row.ncpBase64 === null, row.remedy])).toEqual([
+      ['one.NCP', 'ready', false, 'none'],
+      ['two.NCP', 'duplicate', false, 'none'],
     ]);
   });
 
@@ -200,7 +208,7 @@ describe('runBulkFilterImport', () => {
 
   it('awaits each create, records a duplicate, and continues with later rows', async () => {
     const rows = await readyRows(3);
-    rows[1] = { ...rows[1]!, status: 'failed' };
+    rows[1] = { ...rows[1]!, status: 'failed', remedy: 'retry' };
     const first = deferred<typeof filterFixture>();
     const second = deferred<typeof filterFixture>();
     const third = deferred<typeof filterFixture>();
@@ -208,10 +216,10 @@ describe('runBulkFilterImport', () => {
       .mockImplementationOnce(() => first.promise)
       .mockImplementationOnce(() => second.promise)
       .mockImplementationOnce(() => third.promise);
-    const updates: Array<[string, string, string | null, boolean]> = [];
+    const updates: Array<[string, string, string | null, string]> = [];
 
     const resultPromise = runBulkFilterImport(rows, create, (id, update) => {
-      updates.push([id, update.status, update.message, update.retryable]);
+      updates.push([id, update.status, update.message, update.remedy]);
     });
 
     expect(create).toHaveBeenCalledTimes(1);
@@ -224,12 +232,12 @@ describe('runBulkFilterImport', () => {
 
     await expect(resultPromise).resolves.toEqual({ createdCount: 2, failedCount: 1, paused: false });
     expect(updates).toEqual([
-      ['row-1', 'importing', null, false],
-      ['row-1', 'success', '已导入', false],
-      ['row-2', 'importing', null, false],
-      ['row-2', 'duplicate', '该 NCP 已经发布，请选择其他文件', false],
-      ['row-3', 'importing', null, false],
-      ['row-3', 'success', '已导入', false],
+      ['row-1', 'importing', null, 'none'],
+      ['row-1', 'success', '已导入', 'none'],
+      ['row-2', 'importing', null, 'none'],
+      ['row-2', 'duplicate', '该 NCP 已经发布，请选择其他文件', 'none'],
+      ['row-3', 'importing', null, 'none'],
+      ['row-3', 'success', '已导入', 'none'],
     ]);
   });
 
@@ -245,11 +253,66 @@ describe('runBulkFilterImport', () => {
 
     expect(result).toEqual({ createdCount: 1, failedCount: 1, paused: true });
     expect(create).toHaveBeenCalledTimes(2);
-    expect(rows.map((row) => [row.status, row.message, row.retryable])).toEqual([
-      ['success', '已导入', false],
-      ['failed', '网络连接中断，导入已暂停', true],
-      ['ready', null, true],
+    expect(rows.map((row) => [row.status, row.message, row.remedy])).toEqual([
+      ['success', '已导入', 'none'],
+      ['ambiguous', '网络响应中断，请刷新并核对后再继续', 'reconcile'],
+      ['ready', null, 'none'],
     ]);
+  });
+
+  it('marks a status-0 outcome ambiguous and never blindly resubmits it', async () => {
+    let rows = await readyRows(2);
+    const firstCreate = vi.fn(async () => {
+      throw new ApiFailure(0, 'NETWORK_ERROR', 'response lost');
+    });
+
+    const firstResult = await runBulkFilterImport(rows, firstCreate, (id, update) => {
+      rows = rows.map((row) => row.id === id ? { ...row, ...update } : row);
+    });
+
+    expect(firstResult).toEqual({ createdCount: 0, failedCount: 1, paused: true });
+    expect(rows[0]).toMatchObject({
+      status: 'ambiguous',
+      message: '网络响应中断，请刷新并核对后再继续',
+      remedy: 'reconcile',
+    });
+    expect(rows[1]).toMatchObject({ status: 'ready' });
+
+    const blindRetry = vi.fn(async (_input: FilterCreateInput) => filterFixture);
+    await expect(runBulkFilterImport(rows, blindRetry, () => undefined)).resolves.toEqual({
+      createdCount: 1,
+      failedCount: 0,
+      paused: false,
+    });
+    expect(blindRetry).toHaveBeenCalledTimes(1);
+    expect(blindRetry.mock.calls[0]?.[0].displayName).toBe('Filter 2');
+  });
+
+  it.each([
+    [new ApiFailure(409, 'SLUG_CONFLICT', 'conflict'), 'displayName'],
+    [new ApiFailure(400, 'VALIDATION_ERROR', 'invalid', [{ field: 'displayName', message: 'name' }]), 'displayName'],
+    [new ApiFailure(400, 'VALIDATION_ERROR', 'invalid', [{ field: 'categoryId', message: 'category' }]), 'categoryId'],
+    [new ApiFailure(400, 'VALIDATION_ERROR', 'invalid', [{ field: 'sortOrder', message: 'order' }]), 'sortOrder'],
+    [new ApiFailure(400, 'VALIDATION_ERROR', 'invalid', [
+      { field: 'displayName', message: 'name' },
+      { field: 'categoryId', message: 'category' },
+    ]), 'none'],
+    [new ApiFailure(413, 'PAYLOAD_TOO_LARGE', 'large'), 'none'],
+    [new ApiFailure(422, 'INVALID_NCP', 'invalid'), 'none'],
+    [new ApiFailure(422, 'UNSUPPORTED_NCP', 'unsupported'), 'none'],
+    [new ApiFailure(429, 'RATE_LIMITED', 'slow down'), 'retry'],
+    [new ApiFailure(503, 'NETWORK_ERROR', 'upstream unavailable'), 'retry'],
+    [new ApiFailure(503, 'SERVICE_UNAVAILABLE', 'offline'), 'retry'],
+  ])('maps %s to the typed %s remedy', async (failure, remedy) => {
+    let rows = await readyRows(1);
+
+    await runBulkFilterImport(rows, vi.fn(async () => {
+      throw failure;
+    }), (id, update) => {
+      rows = rows.map((row) => row.id === id ? { ...row, ...update } : row);
+    });
+
+    expect(rows[0]).toMatchObject({ status: 'failed', remedy });
   });
 
   it('never resubmits successes and skips ineligible, client-invalid, or payload-less rows', async () => {
@@ -259,8 +322,7 @@ describe('runBulkFilterImport', () => {
     rows[2] = { ...rows[2]!, status: 'duplicate' };
     rows[3] = { ...rows[3]!, displayName: ' ' };
     rows[4] = { ...rows[4]!, ncpBase64: null };
-    rows[5] = { ...rows[5]!, status: 'failed', retryable: true };
-    rows[6] = { ...rows[6]!, retryable: false };
+    rows[5] = { ...rows[5]!, status: 'failed', remedy: 'retry' };
     const create = vi.fn(async (_input: FilterCreateInput) => filterFixture);
     const updatedIds: string[] = [];
 
@@ -287,7 +349,8 @@ describe('runBulkFilterImport', () => {
     });
 
     expect(result).toEqual({ createdCount: 0, failedCount: 1, paused: false });
-    expect(rows[0]).toMatchObject({ status: 'failed', message: expectedMessage, retryable: false });
+    expect(rows[0]).toMatchObject({ status: 'failed', message: expectedMessage });
+    expect(rows[0]?.remedy).not.toBe('retry');
 
     const retryCreate = vi.fn(async (_input: FilterCreateInput) => filterFixture);
     await expect(runBulkFilterImport(rows, retryCreate, () => undefined)).resolves.toEqual({
@@ -299,10 +362,9 @@ describe('runBulkFilterImport', () => {
   });
 
   it.each([
-    [new ApiFailure(429, 'RATE_LIMITED', 'slow down'), false],
-    [new ApiFailure(503, 'SERVICE_UNAVAILABLE', 'offline'), false],
-    [new ApiFailure(0, 'NETWORK_ERROR', 'offline'), true],
-  ])('keeps transient %s failures eligible for a later run', async (failure, paused) => {
+    new ApiFailure(429, 'RATE_LIMITED', 'slow down'),
+    new ApiFailure(503, 'SERVICE_UNAVAILABLE', 'offline'),
+  ])('keeps transient %s failures eligible for a later run', async (failure) => {
     let rows = await readyRows(1);
     const firstResult = await runBulkFilterImport(rows, vi.fn(async () => {
       throw failure;
@@ -310,8 +372,8 @@ describe('runBulkFilterImport', () => {
       rows = rows.map((row) => row.id === id ? { ...row, ...update } : row);
     });
 
-    expect(firstResult).toEqual({ createdCount: 0, failedCount: 1, paused });
-    expect(rows[0]).toMatchObject({ status: 'failed', retryable: true });
+    expect(firstResult).toEqual({ createdCount: 0, failedCount: 1, paused: false });
+    expect(rows[0]).toMatchObject({ status: 'failed', remedy: 'retry' });
 
     const retryCreate = vi.fn(async (_input: FilterCreateInput) => filterFixture);
     await expect(runBulkFilterImport(rows, retryCreate, () => undefined)).resolves.toEqual({
@@ -401,6 +463,75 @@ describe('useBulkCreateFilters', () => {
     });
 
     expect(invalidate).not.toHaveBeenCalled();
+  });
+
+  it('does not silently refresh a zero-known-success ambiguous run', async () => {
+    const rows = await readyRows(1);
+    const listFilters = vi.fn(async () => [filterFixture]);
+    const api = createApi(vi.fn(async () => {
+      throw new ApiFailure(0, 'NETWORK_ERROR', 'response lost');
+    }), listFilters);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+    const { result } = renderBulkCreateHook(api, queryClient);
+
+    await act(async () => {
+      await result.current.run(rows, () => undefined);
+    });
+
+    expect(invalidate).not.toHaveBeenCalled();
+    expect(listFilters).not.toHaveBeenCalled();
+  });
+
+  it('fetches one authoritative list for reconciliation, updates the cache, and returns it', async () => {
+    const authoritative = [{
+      ...filterFixture,
+      id: 'filter-authoritative',
+      ncpSha256: 'ed53222f4a2329c3f42a2dd6391b4b62d1214b1e3eac917d9bd11a8f22f9e43f',
+    }];
+    const listFilters = vi.fn(async () => authoritative);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    queryClient.setQueryData(queryKeys.filters, [filterFixture]);
+    const { result } = renderBulkCreateHook(
+      createApi(vi.fn(async () => filterFixture), listFilters),
+      queryClient,
+    );
+    const reconcile = (result.current as unknown as {
+      reconcile?: () => Promise<typeof authoritative>;
+    }).reconcile;
+
+    expect(reconcile).toBeTypeOf('function');
+    if (!reconcile) return;
+
+    let reconciled: typeof authoritative | undefined;
+    await act(async () => {
+      reconciled = await reconcile();
+    });
+
+    expect(listFilters).toHaveBeenCalledTimes(1);
+    expect(reconciled).toEqual(authoritative);
+    expect(queryClient.getQueryData(queryKeys.filters)).toEqual(authoritative);
+  });
+
+  it('leaves cached filters untouched when authoritative reconciliation fails', async () => {
+    const cached = [filterFixture];
+    const listFilters = vi.fn(async () => {
+      throw new ApiFailure(503, 'INTERNAL', 'list unavailable');
+    });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    queryClient.setQueryData(queryKeys.filters, cached);
+    const { result } = renderBulkCreateHook(
+      createApi(vi.fn(async () => filterFixture), listFilters),
+      queryClient,
+    );
+
+    await act(async () => {
+      await expect(result.current.reconcile()).rejects.toMatchObject({ status: 503 });
+    });
+
+    expect(listFilters).toHaveBeenCalledTimes(1);
+    expect(queryClient.getQueryData(queryKeys.filters)).toEqual(cached);
+    expect(result.current.isReconciling).toBe(false);
   });
 
   it('invalidates once when a paused run created an earlier row', async () => {

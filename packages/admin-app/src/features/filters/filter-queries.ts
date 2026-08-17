@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ApiFailure, type FilterCreateInput, type FilterPatch } from '../../lib/admin-client';
+import type { AdminFilter } from '../../lib/api-schema';
 import { useSession } from '../../session/session-provider';
 import { queryKeys } from '../query-keys';
 import {
@@ -45,12 +46,16 @@ export function useCreateFilter() {
 
 export function useBulkCreateFilters(): {
   run(rows: readonly BulkFilterRow[], onRow: BulkFilterRowUpdater): Promise<BulkImportRunResult>;
+  reconcile(): Promise<AdminFilter[]>;
   isPending: boolean;
+  isReconciling: boolean;
 } {
   const { api } = useSession();
   const queryClient = useQueryClient();
   const activeRuns = useRef(0);
+  const activeReconciliations = useRef(0);
   const [isPending, setIsPending] = useState(false);
+  const [isReconciling, setIsReconciling] = useState(false);
 
   const run = useCallback(async (
     rows: readonly BulkFilterRow[],
@@ -96,7 +101,20 @@ export function useBulkCreateFilters(): {
     }
   }, [api, queryClient]);
 
-  return { run, isPending };
+  const reconcile = useCallback(async (): Promise<AdminFilter[]> => {
+    activeReconciliations.current += 1;
+    setIsReconciling(true);
+    try {
+      const authoritativeFilters = await api.listFilters();
+      queryClient.setQueryData<AdminFilter[]>(queryKeys.filters, authoritativeFilters);
+      return authoritativeFilters;
+    } finally {
+      activeReconciliations.current -= 1;
+      if (activeReconciliations.current === 0) setIsReconciling(false);
+    }
+  }, [api, queryClient]);
+
+  return { run, reconcile, isPending, isReconciling };
 }
 
 export function useUpdateFilter() {

@@ -418,6 +418,14 @@ textarea:focus-visible,
   margin-bottom: 26px;
 }
 
+.page-heading__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 9px;
+}
+
 .page-heading .eyebrow {
   margin-top: 0;
 }
@@ -1114,6 +1122,10 @@ textarea:focus-visible,
 
   .filter-heading {
     display: grid;
+  }
+
+  .filter-heading .page-heading__actions {
+    justify-content: flex-start;
   }
 
   .bulk-import-defaults {

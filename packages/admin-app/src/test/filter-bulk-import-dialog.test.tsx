@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { useState } from 'react';
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -82,6 +82,7 @@ const filters: AdminFilter[] = [
 ];
 
 type Runner = ReturnType<typeof useBulkCreateFilters>['run'];
+type RunnerState = ReturnType<typeof useBulkCreateFilters>;
 
 const useBulkCreateFiltersMock = vi.mocked(useBulkCreateFilters);
 
@@ -89,11 +90,22 @@ function completedResult(): BulkImportRunResult {
   return { createdCount: 0, failedCount: 0, paused: false };
 }
 
+function runnerState(run: Runner, overrides: Partial<RunnerState> = {}): RunnerState {
+  return {
+    run,
+    reconcile: vi.fn(async () => []),
+    isPending: false,
+    isReconciling: false,
+    ...overrides,
+  };
+}
+
 function renderDialog(overrides: Partial<FilterBulkImportDialogProps> = {}) {
   const props: FilterBulkImportDialogProps = {
     open: true,
     categories,
     filters,
+    filtersReady: true,
     onOpenChange: vi.fn(),
     onImported: vi.fn(),
     ...overrides,
@@ -106,11 +118,31 @@ function rowLabel(fileName: string, field: string, presentation: '桌面' | '移
   return `${fileName} ${field}（${presentation}）`;
 }
 
+async function attemptDialogClose(
+  user: ReturnType<typeof userEvent.setup>,
+  method: 'cancel' | 'close' | 'escape' | 'backdrop',
+) {
+  if (method === 'cancel') {
+    await user.click(screen.getByRole('button', { name: '取消' }));
+  } else if (method === 'close') {
+    await user.click(screen.getByRole('button', { name: '关闭' }));
+  } else if (method === 'escape') {
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'Escape',
+        code: 'Escape',
+        bubbles: true,
+      }));
+    });
+  } else {
+    const overlay = document.querySelector<HTMLElement>('.dialog__overlay');
+    if (!overlay) throw new Error('Expected dialog backdrop');
+    await user.click(overlay);
+  }
+}
+
 beforeEach(() => {
-  useBulkCreateFiltersMock.mockReturnValue({
-    run: vi.fn(async () => completedResult()),
-    isPending: false,
-  });
+  useBulkCreateFiltersMock.mockReturnValue(runnerState(vi.fn(async () => completedResult())));
 });
 
 describe('FilterBulkImportDialog defaults and responsive rows', () => {
@@ -203,6 +235,44 @@ describe('FilterBulkImportDialog defaults and responsive rows', () => {
 });
 
 describe('FilterBulkImportDialog inspection lifecycle', () => {
+  it('blocks file inspection until filters are authoritative, then recovers with the latest sort range', async () => {
+    const onOpenChange = vi.fn();
+    const onImported = vi.fn();
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <FilterBulkImportDialog
+        open
+        categories={categories}
+        filters={[]}
+        filtersReady={false}
+        onOpenChange={onOpenChange}
+        onImported={onImported}
+      />,
+    );
+
+    const input = screen.getByLabelText('NCP 文件（可多选）');
+    expect(input).toBeDisabled();
+    expect(input).toHaveAccessibleDescription('现有滤镜尚未加载完成，暂时无法选择文件或计算排序。');
+    await user.upload(input, ncpFile(fixture02, 'too-early.NCP'));
+    expect(screen.queryByLabelText(rowLabel('too-early.NCP', '显示名称'))).not.toBeInTheDocument();
+
+    rerender(
+      <FilterBulkImportDialog
+        open
+        categories={categories}
+        filters={filters}
+        filtersReady
+        onOpenChange={onOpenChange}
+        onImported={onImported}
+      />,
+    );
+
+    expect(input).toBeEnabled();
+    expect(input).not.toHaveAccessibleDescription();
+    await user.upload(input, ncpFile(fixture02, 'after-ready.NCP'));
+    expect(await screen.findByLabelText(rowLabel('after-ready.NCP', '排序'))).toHaveValue(21);
+  });
+
   it('preserves state when a controlled close is declined and resets only after an actual close transition', async () => {
     const onOpenChange = vi.fn();
     const onImported = vi.fn();
@@ -211,6 +281,7 @@ describe('FilterBulkImportDialog inspection lifecycle', () => {
       open: true,
       categories,
       filters,
+      filtersReady: true,
       onOpenChange,
       onImported,
     };
@@ -223,6 +294,9 @@ describe('FilterBulkImportDialog inspection lifecycle', () => {
     await user.selectOptions(screen.getByLabelText('默认分类'), monochromeCategory.id);
 
     await user.click(screen.getByRole('button', { name: '取消' }));
+    const confirmation = await screen.findByRole('dialog', { name: '放弃未完成的批量导入？' });
+    expect(onOpenChange).not.toHaveBeenCalled();
+    await user.click(within(confirmation).getByRole('button', { name: '放弃并关闭' }));
 
     expect(onOpenChange).toHaveBeenCalledWith(false);
     expect(screen.getByRole('dialog', { name: '批量导入滤镜' })).toBeInTheDocument();
@@ -282,6 +356,7 @@ describe('FilterBulkImportDialog inspection lifecycle', () => {
         open
         categories={[]}
         filters={filters}
+        filtersReady
         onOpenChange={onOpenChange}
         onImported={onImported}
       />,
@@ -293,6 +368,7 @@ describe('FilterBulkImportDialog inspection lifecycle', () => {
         open
         categories={categories}
         filters={filters}
+        filtersReady
         onOpenChange={onOpenChange}
         onImported={onImported}
       />,
@@ -316,6 +392,7 @@ describe('FilterBulkImportDialog inspection lifecycle', () => {
         open
         categories={[]}
         filters={filters}
+        filtersReady
         onOpenChange={onOpenChange}
         onImported={onImported}
       />,
@@ -332,6 +409,7 @@ describe('FilterBulkImportDialog inspection lifecycle', () => {
         open
         categories={categories}
         filters={filters}
+        filtersReady
         onOpenChange={onOpenChange}
         onImported={onImported}
       />,
@@ -350,14 +428,14 @@ describe('FilterBulkImportDialog inspection lifecycle', () => {
     ) => {
       invocation += 1;
       if (invocation === 1) {
-        onRow(rows[0]!.id, { status: 'success', message: '已导入', retryable: false });
+        onRow(rows[0]!.id, { status: 'success', message: '已导入', remedy: 'none' });
         return { createdCount: 1, failedCount: 0, paused: false };
       }
       expect(rows.map((row) => row.fileName)).toEqual(['inherited.NCP']);
-      onRow(rows[0]!.id, { status: 'success', message: '已导入', retryable: false });
+      onRow(rows[0]!.id, { status: 'success', message: '已导入', remedy: 'none' });
       return { createdCount: 1, failedCount: 0, paused: false };
     });
-    useBulkCreateFiltersMock.mockReturnValue({ run, isPending: false });
+    useBulkCreateFiltersMock.mockReturnValue(runnerState(run));
     const onOpenChange = vi.fn();
     const onImported = vi.fn();
     const user = userEvent.setup();
@@ -366,6 +444,7 @@ describe('FilterBulkImportDialog inspection lifecycle', () => {
         open
         categories={categories}
         filters={filters}
+        filtersReady
         onOpenChange={onOpenChange}
         onImported={onImported}
       />,
@@ -387,6 +466,7 @@ describe('FilterBulkImportDialog inspection lifecycle', () => {
         open
         categories={[replacementCategory]}
         filters={filters}
+        filtersReady
         onOpenChange={onOpenChange}
         onImported={onImported}
       />,
@@ -408,7 +488,7 @@ describe('FilterBulkImportDialog inspection lifecycle', () => {
 
   it('makes rows ineligible when categories empty and restores only inherited rows on reappearance', async () => {
     const run = vi.fn(async () => completedResult());
-    useBulkCreateFiltersMock.mockReturnValue({ run, isPending: false });
+    useBulkCreateFiltersMock.mockReturnValue(runnerState(run));
     const onOpenChange = vi.fn();
     const onImported = vi.fn();
     const user = userEvent.setup();
@@ -417,6 +497,7 @@ describe('FilterBulkImportDialog inspection lifecycle', () => {
         open
         categories={categories}
         filters={filters}
+        filtersReady
         onOpenChange={onOpenChange}
         onImported={onImported}
       />,
@@ -436,6 +517,7 @@ describe('FilterBulkImportDialog inspection lifecycle', () => {
         open
         categories={[]}
         filters={filters}
+        filtersReady
         onOpenChange={onOpenChange}
         onImported={onImported}
       />,
@@ -456,6 +538,7 @@ describe('FilterBulkImportDialog inspection lifecycle', () => {
         open
         categories={categories}
         filters={filters}
+        filtersReady
         onOpenChange={onOpenChange}
         onImported={onImported}
       />,
@@ -483,6 +566,7 @@ describe('FilterBulkImportDialog inspection lifecycle', () => {
         open
         categories={categories}
         filters={filters}
+        filtersReady
         onOpenChange={onOpenChange}
         onImported={onImported}
       />,
@@ -494,6 +578,7 @@ describe('FilterBulkImportDialog inspection lifecycle', () => {
         open
         categories={nextCategories}
         filters={filters}
+        filtersReady
         onOpenChange={onOpenChange}
         onImported={onImported}
       />,
@@ -545,6 +630,7 @@ describe('FilterBulkImportDialog inspection lifecycle', () => {
             open={open}
             categories={categories}
             filters={filters}
+            filtersReady
             onOpenChange={(next) => {
               onOpenChange(next);
               setOpen(next);
@@ -577,7 +663,7 @@ describe('FilterBulkImportDialog inspection lifecycle', () => {
 describe('FilterBulkImportDialog validation and import runs', () => {
   it('reports row validation through each invalid control and does not call the runner', async () => {
     const run = vi.fn(async () => completedResult());
-    useBulkCreateFiltersMock.mockReturnValue({ run, isPending: false });
+    useBulkCreateFiltersMock.mockReturnValue(runnerState(run));
     const { user } = renderDialog();
     await user.upload(
       screen.getByLabelText('NCP 文件（可多选）'),
@@ -607,22 +693,22 @@ describe('FilterBulkImportDialog validation and import runs', () => {
       invocation += 1;
       if (invocation === 1) {
         expect(rows.map((row) => row.fileName)).toEqual(['a.NCP', 'b.NCP', 'c.NCP']);
-        onRow(rows[0]!.id, { status: 'importing', message: null, retryable: false });
-        onRow(rows[0]!.id, { status: 'success', message: '已导入', retryable: false });
-        onRow(rows[1]!.id, { status: 'importing', message: null, retryable: false });
-        onRow(rows[1]!.id, { status: 'duplicate', message: '该 NCP 已存在', retryable: false });
-        onRow(rows[2]!.id, { status: 'importing', message: null, retryable: false });
-        onRow(rows[2]!.id, { status: 'failed', message: '服务暂时不可用', retryable: true });
+        onRow(rows[0]!.id, { status: 'importing', message: null, remedy: 'none' });
+        onRow(rows[0]!.id, { status: 'success', message: '已导入', remedy: 'none' });
+        onRow(rows[1]!.id, { status: 'importing', message: null, remedy: 'none' });
+        onRow(rows[1]!.id, { status: 'duplicate', message: '该 NCP 已存在', remedy: 'none' });
+        onRow(rows[2]!.id, { status: 'importing', message: null, remedy: 'none' });
+        onRow(rows[2]!.id, { status: 'failed', message: '服务暂时不可用', remedy: 'retry' });
         return { createdCount: 1, failedCount: 2, paused: false };
       }
 
       expect(rows).toHaveLength(1);
-      expect(rows[0]).toMatchObject({ fileName: 'c.NCP', status: 'failed', retryable: true });
-      onRow(rows[0]!.id, { status: 'importing', message: null, retryable: false });
-      onRow(rows[0]!.id, { status: 'success', message: '已导入', retryable: false });
+      expect(rows[0]).toMatchObject({ fileName: 'c.NCP', status: 'failed', remedy: 'retry' });
+      onRow(rows[0]!.id, { status: 'importing', message: null, remedy: 'none' });
+      onRow(rows[0]!.id, { status: 'success', message: '已导入', remedy: 'none' });
       return { createdCount: 1, failedCount: 0, paused: false };
     });
-    useBulkCreateFiltersMock.mockReturnValue({ run, isPending: false });
+    useBulkCreateFiltersMock.mockReturnValue(runnerState(run));
     const { user } = renderDialog({ onImported });
     await user.upload(screen.getByLabelText('NCP 文件（可多选）'), [
       ncpFile(fixture02, 'a.NCP'),
@@ -668,19 +754,163 @@ describe('FilterBulkImportDialog validation and import runs', () => {
     expect(screen.getByLabelText(rowLabel('b.NCP', '启用'))).not.toBeChecked();
   });
 
+  it('reconciles a response-lost committed row by exact SHA without a blind retry', async () => {
+    const authoritative = [{
+      ...filterFixture,
+      id: 'committed-after-response-loss',
+      ncpSha256: 'ed53222f4a2329c3f42a2dd6391b4b62d1214b1e3eac917d9bd11a8f22f9e43f',
+    }];
+    const refreshed = deferred<AdminFilter[]>();
+    const reconcile = vi.fn(() => refreshed.promise);
+    const run: Runner = vi.fn(async (
+      rows: readonly BulkFilterRow[],
+      onRow: BulkFilterRowUpdater,
+    ) => {
+      onRow(rows[0]!.id, {
+        status: 'ambiguous',
+        message: '网络响应中断，请刷新并核对后再继续',
+        remedy: 'reconcile',
+      });
+      return { createdCount: 0, failedCount: 1, paused: true };
+    });
+    useBulkCreateFiltersMock.mockReturnValue(runnerState(run, { reconcile }));
+    const { user } = renderDialog();
+    const fileName = 'response-lost-committed.NCP';
+    await user.upload(
+      screen.getByLabelText('NCP 文件（可多选）'),
+      ncpFile(fixture02, fileName),
+    );
+    await screen.findByLabelText(rowLabel(fileName, '显示名称'));
+
+    await user.click(screen.getByRole('button', { name: '导入可用项' }));
+
+    const ambiguousStatuses = screen.getAllByText('结果待核对');
+    expect(ambiguousStatuses.length).toBeGreaterThan(0);
+    for (const status of ambiguousStatuses) {
+      expect(status.parentElement).toHaveAttribute('aria-live', 'polite');
+      expect(status.parentElement).toHaveAttribute('tabindex', '0');
+    }
+    expect(screen.queryByRole('button', { name: rowLabel(fileName, '重试') })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '继续导入' })).not.toBeInTheDocument();
+    expect(run).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole('button', { name: '刷新并核对' }));
+    expect(reconcile).toHaveBeenCalledTimes(1);
+    const reconcilingStatuses = screen.getAllByText('核对中')
+      .map((status) => status.closest('.bulk-row-status'))
+      .filter((status): status is HTMLElement => status !== null);
+    expect(reconcilingStatuses.length).toBeGreaterThan(0);
+    for (const status of reconcilingStatuses) {
+      expect(status).toHaveAttribute('aria-live', 'polite');
+    }
+    expect(screen.getByLabelText(rowLabel(fileName, '显示名称'))).toBeDisabled();
+
+    await act(async () => {
+      refreshed.resolve(authoritative);
+      await refreshed.promise;
+    });
+
+    expect(screen.getAllByText('已导入（核对确认）').length).toBeGreaterThan(0);
+    expect(screen.getByLabelText(rowLabel(fileName, '显示名称'))).toBeDisabled();
+    expect(screen.getByRole('button', { name: rowLabel(fileName, '移除') })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: rowLabel(fileName, '重试') })).not.toBeInTheDocument();
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it('makes an absent ambiguous row transiently retryable only after one explicit refresh', async () => {
+    let invocation = 0;
+    const reconcile = vi.fn(async () => []);
+    const run: Runner = vi.fn(async (
+      rows: readonly BulkFilterRow[],
+      onRow: BulkFilterRowUpdater,
+    ) => {
+      invocation += 1;
+      if (invocation === 1) {
+        onRow(rows[0]!.id, {
+          status: 'ambiguous',
+          message: '网络响应中断，请刷新并核对后再继续',
+          remedy: 'reconcile',
+        });
+        return { createdCount: 0, failedCount: 1, paused: true };
+      }
+      expect(rows[0]).toMatchObject({ status: 'failed', remedy: 'retry' });
+      onRow(rows[0]!.id, { status: 'success', message: '已导入', remedy: 'none' });
+      return { createdCount: 1, failedCount: 0, paused: false };
+    });
+    useBulkCreateFiltersMock.mockReturnValue(runnerState(run, { reconcile }));
+    const { user } = renderDialog();
+    const fileName = 'response-lost-absent.NCP';
+    await user.upload(
+      screen.getByLabelText('NCP 文件（可多选）'),
+      ncpFile(fixture02, fileName),
+    );
+    await screen.findByLabelText(rowLabel(fileName, '显示名称'));
+    await user.click(screen.getByRole('button', { name: '导入可用项' }));
+
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('button', { name: rowLabel(fileName, '重试') })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '刷新并核对' }));
+
+    expect(reconcile).toHaveBeenCalledTimes(1);
+    expect(screen.getAllByText('服务器未找到该文件，可以重试').length).toBeGreaterThan(0);
+    expect(screen.getByRole('button', { name: rowLabel(fileName, '重试') })).toBeEnabled();
+    expect(run).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole('button', { name: rowLabel(fileName, '重试') }));
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(screen.getByLabelText(rowLabel(fileName, '显示名称'))).toBeDisabled();
+  });
+
+  it('keeps an ambiguous row locked when authoritative reconciliation fails', async () => {
+    const reconcile = vi.fn(async () => {
+      throw new Error('list unavailable');
+    });
+    const run: Runner = vi.fn(async (
+      rows: readonly BulkFilterRow[],
+      onRow: BulkFilterRowUpdater,
+    ) => {
+      onRow(rows[0]!.id, {
+        status: 'ambiguous',
+        message: '网络响应中断，请刷新并核对后再继续',
+        remedy: 'reconcile',
+      });
+      return { createdCount: 0, failedCount: 1, paused: true };
+    });
+    useBulkCreateFiltersMock.mockReturnValue(runnerState(run, { reconcile }));
+    const { user } = renderDialog();
+    const fileName = 'reconcile-failed.NCP';
+    await user.upload(
+      screen.getByLabelText('NCP 文件（可多选）'),
+      ncpFile(fixture02, fileName),
+    );
+    await screen.findByLabelText(rowLabel(fileName, '显示名称'));
+    await user.click(screen.getByRole('button', { name: '导入可用项' }));
+
+    await user.click(screen.getByRole('button', { name: '刷新并核对' }));
+
+    expect(reconcile).toHaveBeenCalledTimes(1);
+    expect(screen.getByText('刷新核对失败，请重试')).toBeInTheDocument();
+    expect(screen.getAllByText('核对失败，请再次刷新并核对').length).toBeGreaterThan(0);
+    expect(screen.getByRole('button', { name: '刷新并核对' })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: rowLabel(fileName, '重试') })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '继续导入' })).not.toBeInTheDocument();
+    expect(screen.getByLabelText(rowLabel(fileName, '显示名称'))).toBeDisabled();
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
   it('preserves the completed outcome when the import callback throws', async () => {
     const result = { createdCount: 1, failedCount: 0, paused: false } as const;
     const run: Runner = vi.fn(async (
       rows: readonly BulkFilterRow[],
       onRow: BulkFilterRowUpdater,
     ) => {
-      onRow(rows[0]!.id, { status: 'success', message: '已导入', retryable: false });
+      onRow(rows[0]!.id, { status: 'success', message: '已导入', remedy: 'none' });
       return result;
     });
     const onImported = vi.fn(() => {
       throw new Error('consumer failed');
     });
-    useBulkCreateFiltersMock.mockReturnValue({ run, isPending: false });
+    useBulkCreateFiltersMock.mockReturnValue(runnerState(run));
     const { user } = renderDialog({ onImported });
     await user.upload(
       screen.getByLabelText('NCP 文件（可多选）'),
@@ -706,14 +936,14 @@ describe('FilterBulkImportDialog validation and import runs', () => {
       rows: readonly BulkFilterRow[],
       onRow: BulkFilterRowUpdater,
     ) => {
-      onRow(rows[0]!.id, { status: 'success', message: '已导入', retryable: false });
+      onRow(rows[0]!.id, { status: 'success', message: '已导入', remedy: 'none' });
       return result;
     });
     const onImported: FilterBulkImportDialogProps['onImported'] = async (importedResult) => {
       importedResults.push(importedResult);
       await callbackResult.promise;
     };
-    useBulkCreateFiltersMock.mockReturnValue({ run, isPending: false });
+    useBulkCreateFiltersMock.mockReturnValue(runnerState(run));
     const { user } = renderDialog({ onImported });
     await user.upload(
       screen.getByLabelText('NCP 文件（可多选）'),
@@ -746,26 +976,23 @@ describe('FilterBulkImportDialog validation and import runs', () => {
   });
 
   it.each([
-    ['显示名称', async (user: ReturnType<typeof userEvent.setup>, fileName: string) => {
+    ['displayName', async (user: ReturnType<typeof userEvent.setup>, fileName: string) => {
       const input = screen.getByLabelText(rowLabel(fileName, '显示名称'));
       await user.clear(input);
       await user.type(input, 'Recovered Name');
     }],
-    ['分类', async (user: ReturnType<typeof userEvent.setup>, fileName: string) => {
+    ['categoryId', async (user: ReturnType<typeof userEvent.setup>, fileName: string) => {
       await user.selectOptions(
         screen.getByLabelText(rowLabel(fileName, '分类')),
         monochromeCategory.id,
       );
     }],
-    ['排序', async (user: ReturnType<typeof userEvent.setup>, fileName: string) => {
+    ['sortOrder', async (user: ReturnType<typeof userEvent.setup>, fileName: string) => {
       const input = screen.getByLabelText(rowLabel(fileName, '排序'));
       await user.clear(input);
       await user.type(input, '88');
     }],
-    ['启用状态', async (user: ReturnType<typeof userEvent.setup>, fileName: string) => {
-      await user.click(screen.getByLabelText(rowLabel(fileName, '启用')));
-    }],
-  ])('makes a deterministic failed row retryable after editing its %s', async (_field, edit) => {
+  ] as const)('revives a deterministic %s remedy only after its relevant field changes', async (remedy, edit) => {
     let invocation = 0;
     const run: Runner = vi.fn(async (
       rows: readonly BulkFilterRow[],
@@ -776,15 +1003,15 @@ describe('FilterBulkImportDialog validation and import runs', () => {
         onRow(rows[0]!.id, {
           status: 'failed',
           message: '请修改后重试',
-          retryable: false,
+          remedy,
         });
         return { createdCount: 0, failedCount: 1, paused: false };
       }
-      expect(rows[0]).toMatchObject({ status: 'ready', retryable: true });
-      onRow(rows[0]!.id, { status: 'success', message: '已导入', retryable: false });
+      expect(rows[0]).toMatchObject({ status: 'ready', remedy: 'none' });
+      onRow(rows[0]!.id, { status: 'success', message: '已导入', remedy: 'none' });
       return { createdCount: 1, failedCount: 0, paused: false };
     });
-    useBulkCreateFiltersMock.mockReturnValue({ run, isPending: false });
+    useBulkCreateFiltersMock.mockReturnValue(runnerState(run));
     const { user } = renderDialog();
     const fileName = 'recover.NCP';
     await user.upload(
@@ -794,6 +1021,24 @@ describe('FilterBulkImportDialog validation and import runs', () => {
     await screen.findByLabelText(rowLabel(fileName, '显示名称'));
     await user.click(screen.getByRole('button', { name: '导入可用项' }));
     expect(screen.queryByRole('button', { name: rowLabel(fileName, '重试') })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '继续导入' })).toBeDisabled();
+
+    await user.click(screen.getByLabelText(rowLabel(fileName, '启用')));
+    await user.click(screen.getByLabelText('默认启用状态'));
+    if (remedy !== 'displayName') {
+      const name = screen.getByLabelText(rowLabel(fileName, '显示名称'));
+      await user.clear(name);
+      await user.type(name, 'Unrelated Name');
+    }
+    if (remedy !== 'categoryId') {
+      await user.selectOptions(screen.getByLabelText('默认分类'), monochromeCategory.id);
+    }
+    if (remedy !== 'sortOrder') {
+      const order = screen.getByLabelText(rowLabel(fileName, '排序'));
+      await user.clear(order);
+      await user.type(order, '77');
+    }
+    expect(screen.getAllByText('导入失败').length).toBeGreaterThan(0);
     expect(screen.getByRole('button', { name: '继续导入' })).toBeDisabled();
 
     await edit(user, fileName);
@@ -813,10 +1058,10 @@ describe('FilterBulkImportDialog validation and import runs', () => {
       onRow: BulkFilterRowUpdater,
     ) => {
       expect(rows.map((row) => row.fileName)).toEqual(['valid.NCP']);
-      onRow(rows[0]!.id, { status: 'success', message: '已导入', retryable: false });
+      onRow(rows[0]!.id, { status: 'success', message: '已导入', remedy: 'none' });
       return { createdCount: 1, failedCount: 0, paused: false };
     });
-    useBulkCreateFiltersMock.mockReturnValue({ run, isPending: false });
+    useBulkCreateFiltersMock.mockReturnValue(runnerState(run));
     const { user } = renderDialog();
     await user.upload(screen.getByLabelText('NCP 文件（可多选）'), [
       ncpFile(fixture02, 'valid.NCP'),
@@ -844,10 +1089,70 @@ describe('FilterBulkImportDialog validation and import runs', () => {
     expect(run).toHaveBeenCalledTimes(1);
   });
 
-  it('blocks closing only while the runner reports a pending request', async () => {
+  it.each(['cancel', 'close', 'escape', 'backdrop'] as const)(
+    'confirms unfinished rows before %s close and preserves state when declined',
+    async (method) => {
+      const onOpenChange = vi.fn();
+      const { user } = renderDialog({ onOpenChange });
+      const fileName = `${method}-dirty.NCP`;
+      await user.upload(
+        screen.getByLabelText('NCP 文件（可多选）'),
+        ncpFile(fixture02, fileName),
+      );
+      const name = await screen.findByLabelText(rowLabel(fileName, '显示名称'));
+      await user.clear(name);
+      await user.type(name, '未完成的本地修改');
+
+      await attemptDialogClose(user, method);
+
+      let confirmation = await screen.findByRole('dialog', { name: '放弃未完成的批量导入？' });
+      expect(onOpenChange).not.toHaveBeenCalled();
+      await user.click(within(confirmation).getByRole('button', { name: '继续编辑' }));
+      expect(screen.queryByRole('dialog', { name: '放弃未完成的批量导入？' })).not.toBeInTheDocument();
+      expect(screen.getByLabelText(rowLabel(fileName, '显示名称'))).toHaveValue('未完成的本地修改');
+
+      await attemptDialogClose(user, method);
+      confirmation = await screen.findByRole('dialog', { name: '放弃未完成的批量导入？' });
+      await user.click(within(confirmation).getByRole('button', { name: '放弃并关闭' }));
+
+      expect(onOpenChange).toHaveBeenCalledTimes(1);
+      expect(onOpenChange).toHaveBeenCalledWith(false);
+      expect(screen.getByRole('dialog', { name: '批量导入滤镜' })).toBeInTheDocument();
+      expect(screen.getByLabelText(rowLabel(fileName, '显示名称'))).toHaveValue('未完成的本地修改');
+    },
+  );
+
+  it('closes an all-success session directly without discard confirmation', async () => {
+    const onOpenChange = vi.fn();
+    const run: Runner = vi.fn(async (
+      rows: readonly BulkFilterRow[],
+      onRow: BulkFilterRowUpdater,
+    ) => {
+      onRow(rows[0]!.id, { status: 'success', message: '已导入', remedy: 'none' });
+      return { createdCount: 1, failedCount: 0, paused: false };
+    });
+    useBulkCreateFiltersMock.mockReturnValue(runnerState(run));
+    const { user } = renderDialog({ onOpenChange });
+    await user.upload(
+      screen.getByLabelText('NCP 文件（可多选）'),
+      ncpFile(fixture02, 'finished.NCP'),
+    );
+    await screen.findByLabelText(rowLabel('finished.NCP', '显示名称'));
+    await user.click(screen.getByRole('button', { name: '导入可用项' }));
+
+    await user.click(screen.getByRole('button', { name: '取消' }));
+
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    expect(screen.queryByRole('dialog', { name: '放弃未完成的批量导入？' })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ['import', { isPending: true }],
+    ['reconciliation', { isReconciling: true }],
+  ] as const)('blocks closing while the runner reports a pending %s request', async (_kind, busyState) => {
     const onOpenChange = vi.fn();
     const run = vi.fn(async () => completedResult());
-    useBulkCreateFiltersMock.mockReturnValue({ run, isPending: true });
+    useBulkCreateFiltersMock.mockReturnValue(runnerState(run, busyState));
     const { rerender, user } = renderDialog({ onOpenChange });
 
     expect(screen.getByRole('button', { name: '取消' })).toBeDisabled();
@@ -855,12 +1160,13 @@ describe('FilterBulkImportDialog validation and import runs', () => {
     await user.click(screen.getByRole('button', { name: '取消' }));
     expect(onOpenChange).not.toHaveBeenCalled();
 
-    useBulkCreateFiltersMock.mockReturnValue({ run, isPending: false });
+    useBulkCreateFiltersMock.mockReturnValue(runnerState(run));
     rerender(
       <FilterBulkImportDialog
         open
         categories={categories}
         filters={filters}
+        filtersReady
         onOpenChange={onOpenChange}
         onImported={vi.fn()}
       />,

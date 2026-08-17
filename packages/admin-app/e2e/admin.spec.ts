@@ -257,3 +257,37 @@ test('desktop and mobile navigation retain the selected theme', async ({ page },
   await expect(page.locator('html')).toHaveAttribute('data-theme', nextTheme);
   await expect(page.getByRole('heading', { name: '滤镜', exact: true })).toBeVisible();
 });
+
+test('filter heading actions use a wrapping, non-overflowing layout', async ({ page }) => {
+  await login(page);
+
+  const actions = page.locator('.page-heading__actions');
+  await expect(actions).toBeVisible();
+  const layout = await actions.evaluate((element) => {
+    const styles = getComputedStyle(element);
+    const buttons = Array.from(element.querySelectorAll('button')).map((button) => {
+      const box = button.getBoundingClientRect();
+      return { left: box.left, right: box.right };
+    });
+    return {
+      display: styles.display,
+      flexWrap: styles.flexWrap,
+      columnGap: Number.parseFloat(styles.columnGap),
+      rowGap: Number.parseFloat(styles.rowGap),
+      buttons,
+      viewportWidth: document.documentElement.clientWidth,
+      scrollWidth: document.documentElement.scrollWidth,
+    };
+  });
+
+  expect(layout.display).toBe('flex');
+  expect(layout.flexWrap).toBe('wrap');
+  expect(layout.columnGap).toBeGreaterThan(0);
+  expect(layout.rowGap).toBeGreaterThan(0);
+  expect(layout.buttons.length).toBe(2);
+  for (const button of layout.buttons) {
+    expect(button.left).toBeGreaterThanOrEqual(0);
+    expect(button.right).toBeLessThanOrEqual(layout.viewportWidth);
+  }
+  expect(layout.scrollWidth).toBeLessThanOrEqual(layout.viewportWidth);
+});

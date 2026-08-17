@@ -57,10 +57,13 @@ export function FilterPage() {
   const createAvailabilityId = 'filter-create-availability';
   const createUnavailable = !categories.isSuccess;
   const createAvailability = categories.isPending
-    ? '正在加载分类，暂时无法新增滤镜。'
-    : categories.isError ? '分类加载失败，请重试后新增滤镜。' : null;
+    ? '正在加载分类，分类相关操作暂不可用。'
+    : categories.isError ? '分类加载失败，请重试后再进行分类相关操作。' : null;
   const openCreate = () => {
     if (categories.isSuccess) setCreateOpen(true);
+  };
+  const openBulk = () => {
+    if (categories.isSuccess) setBulkOpen(true);
   };
   const categoryNames = useMemo(
     () => new Map((categories.data ?? []).map((category) => [category.id, category.name])),
@@ -156,7 +159,7 @@ export function FilterPage() {
             variant="secondary"
             disabled={createUnavailable}
             aria-describedby={createAvailability ? createAvailabilityId : undefined}
-            onClick={() => setBulkOpen(true)}
+            onClick={openBulk}
           ><Files aria-hidden="true" />批量导入</Button>
           <Button
             disabled={createUnavailable}
@@ -170,13 +173,16 @@ export function FilterPage() {
         open={bulkOpen}
         categories={categories.data ?? []}
         filters={filters.data ?? []}
+        filtersReady={filters.isSuccess}
         onOpenChange={setBulkOpen}
         onImported={(result) => {
           notify(
             result.paused
               ? `导入已暂停，已导入 ${result.createdCount} 个滤镜，请检查未完成项`
               : `已导入 ${result.createdCount} 个滤镜，${result.failedCount} 个需要处理`,
-            result.paused ? 'info' : 'success',
+            result.paused
+              ? 'info'
+              : result.createdCount === 0 && result.failedCount > 0 ? 'failure' : 'success',
           );
         }}
       />

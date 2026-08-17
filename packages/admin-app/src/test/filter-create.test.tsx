@@ -159,7 +159,7 @@ describe('local-first filter creation', () => {
     const bulk = screen.getByRole('button', { name: '批量导入' });
     for (const action of [bulk, create]) {
       expect(action).toBeDisabled();
-      expect(action).toHaveAccessibleDescription('正在加载分类，暂时无法新增滤镜。');
+      expect(action).toHaveAccessibleDescription('正在加载分类，分类相关操作暂不可用。');
     }
     expect(screen.queryByText('发布滤镜前，请先创建至少一个分类。')).not.toBeInTheDocument();
 
@@ -189,7 +189,7 @@ describe('local-first filter creation', () => {
     const bulk = screen.getByRole('button', { name: '批量导入' });
     for (const action of [bulk, create]) {
       expect(action).toBeDisabled();
-      expect(action).toHaveAccessibleDescription('分类加载失败，请重试后新增滤镜。');
+      expect(action).toHaveAccessibleDescription('分类加载失败，请重试后再进行分类相关操作。');
     }
     expect(screen.queryByText('发布滤镜前，请先创建至少一个分类。')).not.toBeInTheDocument();
 
@@ -201,6 +201,66 @@ describe('local-first filter creation', () => {
     await user.click(create);
     const dialog = screen.getByRole('dialog', { name: '新增滤镜' });
     expect(within(dialog).queryByRole('link', { name: '前往分类管理' })).not.toBeInTheDocument();
+  });
+
+  it('opens bulk import with category parity but waits for an authoritative filter list before inspection', async () => {
+    const releaseFilters = deferred<void>();
+    server.use(http.get('/api/admin/filters', async () => {
+      await releaseFilters.promise;
+      return HttpResponse.json({ filters: [filter({ sortOrder: 41 })] });
+    }));
+    const { user } = renderFilters();
+
+    const bulk = await screen.findByRole('button', { name: '批量导入' });
+    const create = screen.getByRole('button', { name: '新增滤镜' });
+    await waitFor(() => {
+      expect(bulk).toBeEnabled();
+      expect(create).toBeEnabled();
+    });
+    await user.click(bulk);
+    const dialog = screen.getByRole('dialog', { name: '批量导入滤镜' });
+    const picker = within(dialog).getByLabelText('NCP 文件（可多选）');
+    expect(picker).toBeDisabled();
+    expect(picker).toHaveAccessibleDescription(
+      '现有滤镜尚未加载完成，暂时无法选择文件或计算排序。',
+    );
+    expect(within(dialog).queryByLabelText(bulkRowLabel('PICCON02.NCP', '排序'))).not.toBeInTheDocument();
+
+    releaseFilters.resolve();
+    await waitFor(() => expect(picker).toBeEnabled());
+    expect(picker).not.toHaveAccessibleDescription();
+    await user.upload(picker, ncpFile());
+
+    expect(await within(dialog).findByLabelText(bulkRowLabel('PICCON02.NCP', '排序'))).toHaveValue(42);
+  });
+
+  it('keeps bulk file selection guarded after a filter-list error and recovers after retry', async () => {
+    let attempts = 0;
+    server.use(http.get('/api/admin/filters', () => {
+      attempts += 1;
+      if (attempts <= 2) {
+        return HttpResponse.json({ code: 'INTERNAL', message: 'temporary' }, { status: 500 });
+      }
+      return HttpResponse.json({ filters: [] });
+    }));
+    const { user } = renderFilters();
+
+    const bulk = await screen.findByRole('button', { name: '批量导入' });
+    await waitFor(() => expect(bulk).toBeEnabled());
+    await user.click(bulk);
+    let dialog = screen.getByRole('dialog', { name: '批量导入滤镜' });
+    expect(within(dialog).getByLabelText('NCP 文件（可多选）')).toBeDisabled();
+    expect(within(dialog).getByLabelText('NCP 文件（可多选）')).toHaveAccessibleDescription(
+      '现有滤镜尚未加载完成，暂时无法选择文件或计算排序。',
+    );
+
+    await user.click(within(dialog).getByRole('button', { name: '取消' }));
+    await user.click(screen.getByRole('button', { name: '重试' }));
+    expect(await screen.findByRole('heading', { name: '暂无滤镜' })).toBeInTheDocument();
+    expect(attempts).toBe(3);
+    await user.click(screen.getByRole('button', { name: '批量导入' }));
+    dialog = screen.getByRole('dialog', { name: '批量导入滤镜' });
+    expect(within(dialog).getByLabelText('NCP 文件（可多选）')).toBeEnabled();
   });
 
   it('bulk imports current rows sequentially, reports partial success, and refreshes the list once', async () => {
@@ -280,6 +340,31 @@ describe('local-first filter creation', () => {
     expect(dialog).toBeInTheDocument();
     expect(posts).toBe(2);
     await waitFor(() => expect(listRequests).toBe(2));
+  });
+
+  it('reports an all-failed bulk run with a failure tone', async () => {
+    server.use(http.post('/api/admin/filters', () => HttpResponse.json({
+      code: 'DUPLICATE_NCP',
+      message: 'already exists',
+    }, { status: 409 })));
+    const { user } = renderFilters();
+
+    await user.click(await screen.findByRole('button', { name: '批量导入' }));
+    const dialog = screen.getByRole('dialog', { name: '批量导入滤镜' });
+    await user.upload(
+      within(dialog).getByLabelText('NCP 文件（可多选）'),
+      ncpFile(fixture02, 'all-failed.NCP'),
+    );
+    await within(dialog).findByLabelText(bulkRowLabel('all-failed.NCP', '显示名称'));
+    await user.click(within(dialog).getByRole('button', { name: '导入可用项' }));
+
+    await waitFor(() => {
+      const notification = document.querySelector('.notification');
+      expect(notification).toHaveTextContent('已导入 0 个滤镜，1 个需要处理');
+      expect(notification).toHaveClass('notification--failure');
+      expect(notification).not.toHaveClass('notification--success');
+      expect(notification).toHaveAttribute('role', 'alert');
+    });
   });
 
   it('reports a paused bulk run without treating untouched rows as completed failures', async () => {

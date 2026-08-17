@@ -1,0 +1,767 @@
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type ReactNode,
+} from 'react';
+import { Button } from '../../components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '../../components/ui/dialog';
+import { Field } from '../../components/ui/field';
+import type { AdminCategory, AdminFilter } from '../../lib/api-schema';
+import {
+  inspectBulkFilterFiles,
+  type BulkFilterRow,
+  type BulkFilterRowUpdate,
+  type BulkImportRunResult,
+} from './filter-bulk-import';
+import { filterClientErrors, type FilterFieldErrors } from './filter-form';
+import { useBulkCreateFilters } from './filter-queries';
+
+export interface FilterBulkImportDialogProps {
+  open: boolean;
+  categories: AdminCategory[];
+  filters: AdminFilter[];
+  onOpenChange(open: boolean): void;
+  onImported(result: BulkImportRunResult): void;
+}
+
+type RowErrors = Record<string, FilterFieldErrors>;
+type Presentation = 'desktop' | 'mobile';
+type EditableField = 'displayName' | 'categoryId' | 'sortOrder' | 'isEnabled';
+
+interface RunProgress {
+  completed: number;
+  total: number;
+}
+
+const statusLabels = {
+  ready: '可导入',
+  invalid: '文件无效',
+  importing: '导入中',
+  success: '已导入',
+  failed: '导入失败',
+  duplicate: '已存在',
+} as const;
+
+function startingSortOrder(categoryId: string, filters: readonly AdminFilter[]): number {
+  const orders = filters
+    .filter((filter) => filter.categoryId === categoryId)
+    .map((filter) => filter.sortOrder);
+  return (orders.length ? Math.max(...orders) : 0) + 1;
+}
+
+function isRunnable(row: BulkFilterRow): boolean {
+  return row.status === 'ready' || (row.status === 'failed' && row.retryable);
+}
+
+function presentationName(presentation: Presentation): string {
+  return presentation === 'desktop' ? '桌面' : '移动';
+}
+
+function controlLabel(row: BulkFilterRow, field: string, presentation: Presentation): string {
+  return `${row.fileName} ${field}（${presentationName(presentation)}）`;
+}
+
+function controlId(row: BulkFilterRow, field: string, presentation: Presentation): string {
+  return `${row.id}-${field}-${presentation}`;
+}
+
+function rowIsLocked(row: BulkFilterRow, pending: boolean): boolean {
+  return pending || row.status === 'success' || row.status === 'importing';
+}
+
+function RowErrorMessage({
+  id,
+  error,
+}: {
+  id: string;
+  error: string | undefined;
+}) {
+  return error ? <p id={id} className="field__error bulk-row-error">{error}</p> : null;
+}
+
+function RowNameControl({
+  row,
+  error,
+  pending,
+  presentation,
+  onEdit,
+}: {
+  row: BulkFilterRow;
+  error: string | undefined;
+  pending: boolean;
+  presentation: Presentation;
+  onEdit(field: EditableField, value: string | boolean): void;
+}) {
+  const id = controlId(row, 'display-name', presentation);
+  const errorId = `${id}-error`;
+  return (
+    <div className="bulk-row-control">
+      <input
+        id={id}
+        aria-label={controlLabel(row, '显示名称', presentation)}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={error ? errorId : undefined}
+        value={row.displayName}
+        disabled={rowIsLocked(row, pending)}
+        onChange={(event) => onEdit('displayName', event.target.value)}
+      />
+      <RowErrorMessage id={errorId} error={error} />
+    </div>
+  );
+}
+
+function RowCategoryControl({
+  row,
+  categories,
+  error,
+  pending,
+  presentation,
+  onEdit,
+}: {
+  row: BulkFilterRow;
+  categories: readonly AdminCategory[];
+  error: string | undefined;
+  pending: boolean;
+  presentation: Presentation;
+  onEdit(field: EditableField, value: string | boolean): void;
+}) {
+  const id = controlId(row, 'category', presentation);
+  const errorId = `${id}-error`;
+  return (
+    <div className="bulk-row-control">
+      <select
+        id={id}
+        aria-label={controlLabel(row, '分类', presentation)}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={error ? errorId : undefined}
+        value={row.categoryId}
+        disabled={rowIsLocked(row, pending)}
+        onChange={(event) => onEdit('categoryId', event.target.value)}
+      >
+        {!row.categoryId ? <option value="">请选择</option> : null}
+        {categories.map((category) => (
+          <option key={category.id} value={category.id}>{category.name}</option>
+        ))}
+      </select>
+      <RowErrorMessage id={errorId} error={error} />
+    </div>
+  );
+}
+
+function RowOrderControl({
+  row,
+  error,
+  pending,
+  presentation,
+  onEdit,
+}: {
+  row: BulkFilterRow;
+  error: string | undefined;
+  pending: boolean;
+  presentation: Presentation;
+  onEdit(field: EditableField, value: string | boolean): void;
+}) {
+  const id = controlId(row, 'sort-order', presentation);
+  const errorId = `${id}-error`;
+  return (
+    <div className="bulk-row-control">
+      <input
+        id={id}
+        type="number"
+        step="1"
+        aria-label={controlLabel(row, '排序', presentation)}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={error ? errorId : undefined}
+        value={row.sortOrder}
+        disabled={rowIsLocked(row, pending)}
+        onChange={(event) => onEdit('sortOrder', event.target.value)}
+      />
+      <RowErrorMessage id={errorId} error={error} />
+    </div>
+  );
+}
+
+function RowEnabledControl({
+  row,
+  pending,
+  presentation,
+  onEdit,
+}: {
+  row: BulkFilterRow;
+  pending: boolean;
+  presentation: Presentation;
+  onEdit(field: EditableField, value: string | boolean): void;
+}) {
+  return (
+    <label className="bulk-row-checkbox">
+      <input
+        type="checkbox"
+        aria-label={controlLabel(row, '启用', presentation)}
+        checked={row.isEnabled}
+        disabled={rowIsLocked(row, pending)}
+        onChange={(event) => onEdit('isEnabled', event.target.checked)}
+      />
+      <span>{row.isEnabled ? '启用' : '停用'}</span>
+    </label>
+  );
+}
+
+function RowStatus({ row }: { row: BulkFilterRow }) {
+  const focusable = row.status === 'failed' || row.status === 'duplicate' || row.status === 'invalid';
+  return (
+    <div
+      className={`bulk-row-status bulk-row-status--${row.status}`}
+      tabIndex={focusable ? 0 : undefined}
+    >
+      <strong>{statusLabels[row.status]}</strong>
+      {row.message && row.message !== statusLabels[row.status]
+        ? <span>{row.message}</span>
+        : null}
+    </div>
+  );
+}
+
+function RowActions({
+  row,
+  pending,
+  presentation,
+  onRemove,
+  onRetry,
+}: {
+  row: BulkFilterRow;
+  pending: boolean;
+  presentation: Presentation;
+  onRemove(): void;
+  onRetry(): void;
+}) {
+  const locked = rowIsLocked(row, pending);
+  return (
+    <div className="bulk-row-actions">
+      {row.status === 'failed' && row.retryable ? (
+        <Button
+          variant="secondary"
+          size="compact"
+          aria-label={controlLabel(row, '重试', presentation)}
+          disabled={pending}
+          onClick={onRetry}
+        >重试</Button>
+      ) : null}
+      <Button
+        variant="ghost"
+        size="compact"
+        aria-label={controlLabel(row, '移除', presentation)}
+        disabled={locked}
+        onClick={onRemove}
+      >移除</Button>
+    </div>
+  );
+}
+
+function MobileField({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="bulk-import-card__field">
+      <span>{label}</span>
+      {children}
+    </div>
+  );
+}
+
+export function FilterBulkImportDialog({
+  open,
+  categories,
+  filters,
+  onOpenChange,
+  onImported,
+}: FilterBulkImportDialogProps) {
+  const runner = useBulkCreateFilters();
+  const [rows, setRows] = useState<BulkFilterRow[]>([]);
+  const [defaultCategoryId, setDefaultCategoryId] = useState(categories[0]?.id ?? '');
+  const [defaultEnabled, setDefaultEnabled] = useState(true);
+  const [rowErrors, setRowErrors] = useState<RowErrors>({});
+  const [selectionError, setSelectionError] = useState<string | null>(null);
+  const [summary, setSummary] = useState<string | null>(null);
+  const [progress, setProgress] = useState<RunProgress | null>(null);
+  const [hasRun, setHasRun] = useState(false);
+  const defaultCategoryRef = useRef(categories[0]?.id ?? '');
+  const defaultEnabledRef = useRef(true);
+  const filtersRef = useRef(filters);
+  const inspectionGeneration = useRef(0);
+  const dialogGeneration = useRef(0);
+  const wasOpen = useRef(false);
+  const runStarting = useRef(false);
+  const contentNode = useRef<HTMLDivElement | null>(null);
+  const summaryRef = useRef<HTMLParagraphElement>(null);
+  const setContentRef = useCallback((content: HTMLDivElement | null) => {
+    contentNode.current = content;
+    const close = content?.querySelector<HTMLButtonElement>('.dialog__close');
+    if (close) close.disabled = runner.isPending;
+  }, [runner.isPending]);
+  filtersRef.current = filters;
+
+  const clear = (categoryId: string) => {
+    inspectionGeneration.current += 1;
+    dialogGeneration.current += 1;
+    defaultCategoryRef.current = categoryId;
+    defaultEnabledRef.current = true;
+    setRows([]);
+    setDefaultCategoryId(categoryId);
+    setDefaultEnabled(true);
+    setRowErrors({});
+    setSelectionError(null);
+    setSummary(null);
+    setProgress(null);
+    setHasRun(false);
+    runStarting.current = false;
+  };
+
+  useEffect(() => {
+    if (open !== wasOpen.current) {
+      clear(open ? categories[0]?.id ?? '' : '');
+      wasOpen.current = open;
+    } else if (open && !wasOpen.current) {
+      clear(categories[0]?.id ?? '');
+      wasOpen.current = true;
+    }
+  // Dialog sessions reset only on open/close transitions, not query refreshes.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  useEffect(() => {
+    if (open && !defaultCategoryId && categories.length > 0) {
+      const categoryId = categories[0]!.id;
+      defaultCategoryRef.current = categoryId;
+      setDefaultCategoryId(categoryId);
+      setRows((current) => current.map((row) => {
+        if (row.categoryOverridden || row.status === 'success') return row;
+        const next = { ...row, categoryId };
+        return row.status === 'failed'
+          ? { ...next, status: 'ready', message: null, retryable: true }
+          : next;
+      }));
+      setRowErrors((current) => {
+        const next = { ...current };
+        for (const row of rows) {
+          if (!row.categoryOverridden && row.status !== 'success' && next[row.id]?.categoryId) {
+            const nextForRow = { ...next[row.id] };
+            delete nextForRow.categoryId;
+            if (Object.keys(nextForRow).length) next[row.id] = nextForRow;
+            else delete next[row.id];
+          }
+        }
+        return next;
+      });
+    }
+  }, [categories, defaultCategoryId, open, rows]);
+
+  useEffect(() => {
+    if (summary) summaryRef.current?.focus();
+  }, [summary]);
+
+  useEffect(() => {
+    const close = contentNode.current?.querySelector<HTMLButtonElement>('.dialog__close');
+    if (close) close.disabled = runner.isPending;
+  }, [runner.isPending]);
+
+  const requestClose = (next: boolean) => {
+    if (runner.isPending) return;
+    if (!next) clear('');
+    onOpenChange(next);
+  };
+
+  const changeFiles = async (event: ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files;
+    const generation = inspectionGeneration.current + 1;
+    inspectionGeneration.current = generation;
+    setRows([]);
+    setRowErrors({});
+    setSelectionError(null);
+    setSummary(null);
+    setProgress(null);
+    setHasRun(false);
+    if (!files?.length) return;
+
+    try {
+      const inspectedCategoryId = defaultCategoryRef.current;
+      const next = await inspectBulkFilterFiles(Array.from(files), {
+        categoryId: inspectedCategoryId,
+        isEnabled: defaultEnabledRef.current,
+        startingSortOrder: startingSortOrder(inspectedCategoryId, filtersRef.current),
+      });
+      if (inspectionGeneration.current !== generation) return;
+      const latestCategoryId = defaultCategoryRef.current;
+      const latestEnabled = defaultEnabledRef.current;
+      const latestSortOrder = startingSortOrder(latestCategoryId, filtersRef.current);
+      const materialized = next.map((row, index) => ({
+        ...row,
+        categoryId: latestCategoryId,
+        isEnabled: latestEnabled,
+        sortOrder: String(latestSortOrder + index),
+      }));
+      setRows(materialized);
+      setProgress({ completed: 0, total: materialized.filter(isRunnable).length });
+    } catch (error) {
+      if (inspectionGeneration.current !== generation) return;
+      setSelectionError(error instanceof Error ? error.message : '无法读取 NCP 文件，请重试');
+    }
+  };
+
+  const clearRowError = (id: string, field: EditableField) => {
+    setRowErrors((current) => {
+      if (!current[id]?.[field]) return current;
+      const nextForRow = { ...current[id] };
+      delete nextForRow[field];
+      const next = { ...current };
+      if (Object.keys(nextForRow).length) next[id] = nextForRow;
+      else delete next[id];
+      return next;
+    });
+  };
+
+  const reviveEditedFailure = (row: BulkFilterRow): BulkFilterRow => (
+    row.status === 'failed'
+      ? { ...row, status: 'ready', message: null, retryable: true }
+      : row
+  );
+
+  const editRow = (
+    id: string,
+    field: EditableField,
+    value: string | boolean,
+  ) => {
+    setRows((current) => current.map((row) => {
+      if (row.id !== id || row.status === 'success' || row.status === 'importing') return row;
+      let next = row;
+      if (field === 'displayName' && typeof value === 'string') {
+        next = { ...row, displayName: value };
+      } else if (field === 'categoryId' && typeof value === 'string') {
+        next = { ...row, categoryId: value, categoryOverridden: true };
+      } else if (field === 'sortOrder' && typeof value === 'string') {
+        next = { ...row, sortOrder: value };
+      } else if (field === 'isEnabled' && typeof value === 'boolean') {
+        next = { ...row, isEnabled: value, enabledOverridden: true };
+      }
+      return reviveEditedFailure(next);
+    }));
+    clearRowError(id, field);
+    setSummary(null);
+  };
+
+  const changeDefaultCategory = (categoryId: string) => {
+    defaultCategoryRef.current = categoryId;
+    setDefaultCategoryId(categoryId);
+    setRows((current) => current.map((row) => {
+      if (row.categoryOverridden || row.status === 'success') return row;
+      return reviveEditedFailure({ ...row, categoryId });
+    }));
+    setRowErrors((current) => {
+      const next = { ...current };
+      for (const row of rows) {
+        if (!row.categoryOverridden && row.status !== 'success' && next[row.id]?.categoryId) {
+          const nextForRow = { ...next[row.id] };
+          delete nextForRow.categoryId;
+          if (Object.keys(nextForRow).length) next[row.id] = nextForRow;
+          else delete next[row.id];
+        }
+      }
+      return next;
+    });
+    setSummary(null);
+  };
+
+  const changeDefaultEnabled = (isEnabled: boolean) => {
+    defaultEnabledRef.current = isEnabled;
+    setDefaultEnabled(isEnabled);
+    setRows((current) => current.map((row) => {
+      if (row.enabledOverridden || row.status === 'success') return row;
+      return reviveEditedFailure({ ...row, isEnabled });
+    }));
+    setSummary(null);
+  };
+
+  const removeRow = (id: string) => {
+    setRows((current) => current.filter((row) => row.id !== id));
+    setRowErrors((current) => {
+      if (!current[id]) return current;
+      const next = { ...current };
+      delete next[id];
+      return next;
+    });
+    setSummary(null);
+  };
+
+  const mergeRowUpdate = (id: string, update: BulkFilterRowUpdate) => {
+    setRows((current) => current.map((row) => row.id === id ? { ...row, ...update } : row));
+  };
+
+  const runRows = async (candidateRows: readonly BulkFilterRow[]) => {
+    if (runner.isPending || runStarting.current) return;
+    const errorsForRun: RowErrors = {};
+    const runnableRows: BulkFilterRow[] = [];
+    for (const row of candidateRows) {
+      if (!isRunnable(row) || row.ncpBase64 === null) continue;
+      const errors = filterClientErrors({
+        displayName: row.displayName,
+        categoryId: row.categoryId,
+        description: '',
+        slug: '',
+        sortOrder: row.sortOrder,
+      });
+      if (Object.keys(errors).length) errorsForRun[row.id] = errors;
+      else runnableRows.push(row);
+    }
+
+    setRowErrors((current) => {
+      const next = { ...current };
+      for (const row of candidateRows) delete next[row.id];
+      return { ...next, ...errorsForRun };
+    });
+    setSummary(null);
+    if (!runnableRows.length) return;
+
+    runStarting.current = true;
+    const generation = dialogGeneration.current;
+    const completedIds = new Set<string>();
+    const total = runnableRows.length;
+    setProgress({ completed: 0, total });
+    try {
+      const result = await runner.run(runnableRows, (id, update) => {
+        if (dialogGeneration.current !== generation) return;
+        mergeRowUpdate(id, update);
+        if (update.status !== 'importing' && !completedIds.has(id)) {
+          completedIds.add(id);
+          setProgress({ completed: completedIds.size, total });
+        }
+      });
+      if (dialogGeneration.current !== generation) return;
+      setHasRun(true);
+      setSummary(result.paused
+        ? `导入已暂停，已完成 ${completedIds.size} / ${total}`
+        : `已导入 ${result.createdCount} 个滤镜，${result.failedCount} 个需要处理`);
+      onImported(result);
+    } catch {
+      if (dialogGeneration.current !== generation) return;
+      setHasRun(true);
+      setSummary('批量导入未完成，请重试');
+    } finally {
+      runStarting.current = false;
+    }
+  };
+
+  const retryRow = (id: string) => {
+    const row = rows.find((candidate) => candidate.id === id);
+    if (row) void runRows([row]);
+  };
+
+  const runnableCount = rows.filter(isRunnable).length;
+  const pending = runner.isPending;
+
+  const rowControls = (row: BulkFilterRow, presentation: Presentation) => {
+    const errors = rowErrors[row.id] ?? {};
+    const onEdit = (field: EditableField, value: string | boolean) => editRow(row.id, field, value);
+    return {
+      name: (
+        <RowNameControl
+          row={row}
+          error={errors.displayName}
+          pending={pending}
+          presentation={presentation}
+          onEdit={onEdit}
+        />
+      ),
+      category: (
+        <RowCategoryControl
+          row={row}
+          categories={categories}
+          error={errors.categoryId}
+          pending={pending}
+          presentation={presentation}
+          onEdit={onEdit}
+        />
+      ),
+      order: (
+        <RowOrderControl
+          row={row}
+          error={errors.sortOrder}
+          pending={pending}
+          presentation={presentation}
+          onEdit={onEdit}
+        />
+      ),
+      enabled: (
+        <RowEnabledControl
+          row={row}
+          pending={pending}
+          presentation={presentation}
+          onEdit={onEdit}
+        />
+      ),
+      status: <RowStatus row={row} />,
+      actions: (
+        <RowActions
+          row={row}
+          pending={pending}
+          presentation={presentation}
+          onRemove={() => removeRow(row.id)}
+          onRetry={() => retryRow(row.id)}
+        />
+      ),
+    };
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={requestClose}>
+      <DialogContent
+        ref={setContentRef}
+        className={`filter-bulk-import-dialog${pending ? ' filter-bulk-import-dialog--pending' : ''}`}
+      >
+        <DialogHeader>
+          <DialogTitle>批量导入滤镜</DialogTitle>
+          <DialogDescription>本地检查最多 100 个 NCP 文件，再逐个提交可用项。</DialogDescription>
+        </DialogHeader>
+        <div className="filter-bulk-import-form">
+          <div className="ncp-upload">
+            <label htmlFor="filter-bulk-ncp-files">NCP 文件（可多选）</label>
+            <input
+              id="filter-bulk-ncp-files"
+              type="file"
+              multiple
+              accept=".ncp,application/octet-stream"
+              disabled={pending}
+              onChange={(event) => void changeFiles(event)}
+            />
+            <p>一次最多选择 100 个文件；无效项和重复项会留在列表中供检查。</p>
+          </div>
+          {selectionError ? <p className="form-alert" role="alert">{selectionError}</p> : null}
+          {!categories.length ? (
+            <div className="form-warning"><p>导入滤镜前，请先创建至少一个分类。</p></div>
+          ) : null}
+          <div className="bulk-import-defaults">
+            <Field
+              label="默认分类"
+              description="仅更新尚未单独修改且未成功导入的行；不会重算可见排序。"
+            >
+              <select
+                value={defaultCategoryId}
+                disabled={pending || !categories.length}
+                onChange={(event) => changeDefaultCategory(event.target.value)}
+              >
+                {categories.map((category) => (
+                  <option key={category.id} value={category.id}>{category.name}</option>
+                ))}
+              </select>
+            </Field>
+            <div className="field">
+              <div className="field__label-row"><span>默认启用状态</span></div>
+              <label className="checkbox-field">
+                <input
+                  type="checkbox"
+                  aria-label="默认启用状态"
+                  checked={defaultEnabled}
+                  disabled={pending}
+                  onChange={(event) => changeDefaultEnabled(event.target.checked)}
+                />
+                <span>{defaultEnabled ? '默认启用' : '默认停用'}</span>
+              </label>
+              <p className="field__description">单独修改的行不会跟随后续默认值变化。</p>
+            </div>
+          </div>
+
+          <div className="bulk-import-summary-bar">
+            <p>已选择 {rows.length} 个文件，其中 {runnableCount} 个当前可导入。</p>
+            <p role="status" aria-live="polite">
+              导入进度：{progress?.completed ?? 0} / {progress?.total ?? 0}
+            </p>
+          </div>
+          {summary ? (
+            <p ref={summaryRef} className="bulk-import-run-summary" role="alert" tabIndex={-1}>
+              {summary}
+            </p>
+          ) : null}
+
+          {rows.length ? (
+            <>
+              <div className="bulk-import-table-wrap">
+                <table className="bulk-import-table" aria-label="待导入滤镜">
+                  <thead>
+                    <tr>
+                      <th>文件 / 来源</th>
+                      <th>显示名称</th>
+                      <th>分类</th>
+                      <th>排序</th>
+                      <th>启用</th>
+                      <th>状态</th>
+                      <th>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((row) => {
+                      const controls = rowControls(row, 'desktop');
+                      return (
+                        <tr key={row.id}>
+                          <td>
+                            <strong>{row.fileName}</strong>
+                            <span className="record-secondary">
+                              {row.inspection?.parsed.sourceName ?? '未解析'}
+                            </span>
+                          </td>
+                          <td>{controls.name}</td>
+                          <td>{controls.category}</td>
+                          <td>{controls.order}</td>
+                          <td>{controls.enabled}</td>
+                          <td>{controls.status}</td>
+                          <td>{controls.actions}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="bulk-import-cards">
+                {rows.map((row) => {
+                  const controls = rowControls(row, 'mobile');
+                  return (
+                    <article className="bulk-import-card" key={row.id}>
+                      <header>
+                        <div>
+                          <h3>{row.fileName}</h3>
+                          <p>{row.inspection?.parsed.sourceName ?? '未解析'}</p>
+                        </div>
+                        {controls.status}
+                      </header>
+                      <MobileField label="显示名称">{controls.name}</MobileField>
+                      <MobileField label="分类">{controls.category}</MobileField>
+                      <MobileField label="排序">{controls.order}</MobileField>
+                      <MobileField label="启用状态">{controls.enabled}</MobileField>
+                      {controls.actions}
+                    </article>
+                  );
+                })}
+              </div>
+            </>
+          ) : (
+            <p className="bulk-import-empty">选择 NCP 文件后，可在这里逐项检查发布信息。</p>
+          )}
+
+          <DialogFooter>
+            <Button variant="ghost" disabled={pending} onClick={() => requestClose(false)}>取消</Button>
+            <Button
+              disabled={pending || runnableCount === 0}
+              onClick={() => void runRows(rows)}
+            >{hasRun ? '继续导入' : '导入可用项'}</Button>
+          </DialogFooter>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}

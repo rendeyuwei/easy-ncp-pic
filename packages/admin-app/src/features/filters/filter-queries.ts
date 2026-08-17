@@ -59,11 +59,37 @@ export function useBulkCreateFilters(): {
     activeRuns.current += 1;
     setIsPending(true);
     try {
-      const result = await runBulkFilterImport(rows, (input) => api.createFilter(input), onRow);
-      if (result.createdCount > 0) {
-        await queryClient.invalidateQueries({ queryKey: queryKeys.filters });
+      let committedCount = 0;
+      let result: BulkImportRunResult | null = null;
+      let coordinatorFailure: { error: unknown } | null = null;
+      try {
+        result = await runBulkFilterImport(rows, async (input) => {
+          const created = await api.createFilter(input);
+          committedCount += 1;
+          return created;
+        }, onRow);
+      } catch (error) {
+        coordinatorFailure = { error };
       }
-      return result;
+
+      let invalidationFailure: { error: unknown } | null = null;
+      if (committedCount > 0) {
+        try {
+          await queryClient.invalidateQueries({ queryKey: queryKeys.filters });
+        } catch (error) {
+          invalidationFailure = { error };
+        }
+      }
+
+      if (coordinatorFailure !== null && invalidationFailure !== null) {
+        throw new AggregateError(
+          [coordinatorFailure.error, invalidationFailure.error],
+          'Bulk import and filter invalidation both failed',
+        );
+      }
+      if (coordinatorFailure !== null) throw coordinatorFailure.error;
+      if (invalidationFailure !== null) throw invalidationFailure.error;
+      return result!;
     } finally {
       activeRuns.current -= 1;
       if (activeRuns.current === 0) setIsPending(false);

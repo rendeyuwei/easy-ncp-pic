@@ -422,6 +422,102 @@ describe('useBulkCreateFilters', () => {
     expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.filters });
   });
 
+  it('invalidates once before rethrowing a success observer exception', async () => {
+    const rows = await readyRows(2);
+    const observerError = new Error('success observer failed');
+    const invalidation = deferred<void>();
+    const createFilter = vi.fn(async () => filterFixture);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries').mockImplementationOnce(() => invalidation.promise);
+    const { result } = renderBulkCreateHook(createApi(createFilter), queryClient);
+    let runPromise!: ReturnType<typeof result.current.run>;
+    let settled = false;
+
+    act(() => {
+      runPromise = result.current.run(rows, (_id, update) => {
+        if (update.status === 'success') throw observerError;
+      });
+    });
+    void runPromise.catch(() => { settled = true; });
+    await waitFor(() => expect(invalidate).toHaveBeenCalledTimes(1));
+
+    expect(createFilter).toHaveBeenCalledTimes(1);
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.filters });
+    expect(settled).toBe(false);
+    expect(result.current.isPending).toBe(true);
+
+    await act(async () => {
+      invalidation.resolve();
+      await expect(runPromise).rejects.toBe(observerError);
+    });
+    expect(result.current.isPending).toBe(false);
+  });
+
+  it('invalidates an earlier success before rethrowing a later importing observer exception', async () => {
+    const rows = await readyRows(2);
+    const observerError = new Error('later importing observer failed');
+    const createFilter = vi.fn(async () => filterFixture);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+    const { result } = renderBulkCreateHook(createApi(createFilter), queryClient);
+
+    await act(async () => {
+      await expect(result.current.run(rows, (id, update) => {
+        if (id === 'row-2' && update.status === 'importing') throw observerError;
+      })).rejects.toBe(observerError);
+    });
+
+    expect(createFilter).toHaveBeenCalledTimes(1);
+    expect(invalidate).toHaveBeenCalledTimes(1);
+    expect(result.current.isPending).toBe(false);
+  });
+
+  it('invalidates an earlier success before rethrowing a later failure observer exception', async () => {
+    const rows = await readyRows(2);
+    const observerError = new Error('later failure observer failed');
+    const createFilter = vi.fn()
+      .mockResolvedValueOnce(filterFixture)
+      .mockRejectedValueOnce(new ApiFailure(400, 'VALIDATION_ERROR', 'invalid'));
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+    const { result } = renderBulkCreateHook(createApi(createFilter), queryClient);
+
+    await act(async () => {
+      await expect(result.current.run(rows, (id, update) => {
+        if (id === 'row-2' && update.status === 'failed') throw observerError;
+      })).rejects.toBe(observerError);
+    });
+
+    expect(createFilter).toHaveBeenCalledTimes(2);
+    expect(invalidate).toHaveBeenCalledTimes(1);
+    expect(result.current.isPending).toBe(false);
+  });
+
+  it('reports both observer and invalidation errors and still clears isPending', async () => {
+    const rows = await readyRows(1);
+    const observerError = new Error('success observer failed');
+    const invalidationError = new Error('invalidation failed');
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries').mockRejectedValueOnce(invalidationError);
+    const { result } = renderBulkCreateHook(createApi(vi.fn(async () => filterFixture)), queryClient);
+    let caught: unknown;
+
+    await act(async () => {
+      try {
+        await result.current.run(rows, (_id, update) => {
+          if (update.status === 'success') throw observerError;
+        });
+      } catch (error) {
+        caught = error;
+      }
+    });
+
+    expect(caught).toBeInstanceOf(AggregateError);
+    expect((caught as AggregateError).errors).toEqual([observerError, invalidationError]);
+    expect(invalidate).toHaveBeenCalledTimes(1);
+    expect(result.current.isPending).toBe(false);
+  });
+
   it('keeps isPending true until every overlapping run settles', async () => {
     const rows = await readyRows(2);
     const first = deferred<typeof filterFixture>();

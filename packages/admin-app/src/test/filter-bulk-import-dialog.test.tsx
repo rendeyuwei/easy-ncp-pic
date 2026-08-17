@@ -61,6 +61,14 @@ const monochromeCategory: AdminCategory = {
   isEnabled: true,
 };
 
+const replacementCategory: AdminCategory = {
+  id: 'category-replacement',
+  name: '替代分类',
+  slug: 'replacement',
+  sortOrder: 30,
+  isEnabled: true,
+};
+
 const categories = [categoryFixture, monochromeCategory];
 const filters: AdminFilter[] = [
   { ...filterFixture, id: 'film-low', sortOrder: 4 },
@@ -195,6 +203,53 @@ describe('FilterBulkImportDialog defaults and responsive rows', () => {
 });
 
 describe('FilterBulkImportDialog inspection lifecycle', () => {
+  it('preserves state when a controlled close is declined and resets only after an actual close transition', async () => {
+    const onOpenChange = vi.fn();
+    const onImported = vi.fn();
+    const user = userEvent.setup();
+    const baseProps: FilterBulkImportDialogProps = {
+      open: true,
+      categories,
+      filters,
+      onOpenChange,
+      onImported,
+    };
+    const { rerender } = render(<FilterBulkImportDialog {...baseProps} />);
+    const input = screen.getByLabelText('NCP 文件（可多选）');
+    await user.upload(input, ncpFile(fixture02, 'held-open.NCP'));
+    const name = await screen.findByLabelText(rowLabel('held-open.NCP', '显示名称'));
+    await user.clear(name);
+    await user.type(name, 'Held Open');
+    await user.selectOptions(screen.getByLabelText('默认分类'), monochromeCategory.id);
+
+    await user.click(screen.getByRole('button', { name: '取消' }));
+
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    expect(screen.getByRole('dialog', { name: '批量导入滤镜' })).toBeInTheDocument();
+    expect(screen.getByLabelText(rowLabel('held-open.NCP', '显示名称'))).toHaveValue('Held Open');
+    expect(screen.getByLabelText('默认分类')).toHaveValue(monochromeCategory.id);
+    expect((screen.getByLabelText('NCP 文件（可多选）') as HTMLInputElement).files?.[0]?.name)
+      .toBe('held-open.NCP');
+    expect(screen.getByRole('status')).toHaveTextContent(/0\s*\/\s*1/);
+
+    const slowRead = deferred<ArrayBuffer>();
+    const slow = new File([fixture33], 'accepted-close.NCP', { type: 'application/octet-stream' });
+    Object.defineProperty(slow, 'arrayBuffer', { value: () => slowRead.promise });
+    await user.upload(screen.getByLabelText('NCP 文件（可多选）'), slow);
+    rerender(<FilterBulkImportDialog {...baseProps} open={false} />);
+    expect(screen.queryByRole('dialog', { name: '批量导入滤镜' })).not.toBeInTheDocument();
+    rerender(<FilterBulkImportDialog {...baseProps} open />);
+
+    expect(screen.getByLabelText('NCP 文件（可多选）')).toHaveValue('');
+    expect(screen.getByLabelText('默认分类')).toHaveValue(categoryFixture.id);
+    expect(screen.queryByLabelText(rowLabel('held-open.NCP', '显示名称'))).not.toBeInTheDocument();
+    await act(async () => {
+      slowRead.resolve(fixture33.slice().buffer);
+      await slowRead.promise;
+    });
+    expect(screen.queryByLabelText(rowLabel('accepted-close.NCP', '显示名称'))).not.toBeInTheDocument();
+  });
+
   it('applies the latest defaults and category sort range when they change during inspection', async () => {
     const slowRead = deferred<ArrayBuffer>();
     const slow = new File([fixture02], 'slow-defaults.NCP', { type: 'application/octet-stream' });
@@ -285,6 +340,175 @@ describe('FilterBulkImportDialog inspection lifecycle', () => {
     expect(await screen.findByLabelText(rowLabel('visible-before-category.NCP', '分类')))
       .toHaveValue(categoryFixture.id);
     expect(screen.getByLabelText(rowLabel('visible-before-category.NCP', '排序'))).toHaveValue(1);
+  });
+
+  it('reconciles a replaced default while locking success and invalidating a missing override', async () => {
+    let invocation = 0;
+    const run: Runner = vi.fn(async (
+      rows: readonly BulkFilterRow[],
+      onRow: BulkFilterRowUpdater,
+    ) => {
+      invocation += 1;
+      if (invocation === 1) {
+        onRow(rows[0]!.id, { status: 'success', message: '已导入', retryable: false });
+        return { createdCount: 1, failedCount: 0, paused: false };
+      }
+      expect(rows.map((row) => row.fileName)).toEqual(['inherited.NCP']);
+      onRow(rows[0]!.id, { status: 'success', message: '已导入', retryable: false });
+      return { createdCount: 1, failedCount: 0, paused: false };
+    });
+    useBulkCreateFiltersMock.mockReturnValue({ run, isPending: false });
+    const onOpenChange = vi.fn();
+    const onImported = vi.fn();
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <FilterBulkImportDialog
+        open
+        categories={categories}
+        filters={filters}
+        onOpenChange={onOpenChange}
+        onImported={onImported}
+      />,
+    );
+    await user.upload(screen.getByLabelText('NCP 文件（可多选）'), [
+      ncpFile(fixture02, 'locked.NCP'),
+      ncpFile(fixture33, 'inherited.NCP'),
+      ncpFile(fixtureVariant, 'overridden.NCP'),
+    ]);
+    await screen.findByLabelText(rowLabel('overridden.NCP', '分类'));
+    await user.selectOptions(
+      screen.getByLabelText(rowLabel('overridden.NCP', '分类')),
+      monochromeCategory.id,
+    );
+    await user.click(screen.getByRole('button', { name: '导入可用项' }));
+
+    rerender(
+      <FilterBulkImportDialog
+        open
+        categories={[replacementCategory]}
+        filters={filters}
+        onOpenChange={onOpenChange}
+        onImported={onImported}
+      />,
+    );
+
+    expect(screen.getByLabelText('默认分类')).toHaveValue(replacementCategory.id);
+    expect(screen.getByLabelText(rowLabel('locked.NCP', '分类'))).toHaveValue(categoryFixture.id);
+    expect(screen.getByLabelText(rowLabel('locked.NCP', '分类'))).toBeDisabled();
+    expect(screen.getByLabelText(rowLabel('inherited.NCP', '分类'))).toHaveValue(replacementCategory.id);
+    expect(screen.getByLabelText(rowLabel('inherited.NCP', '排序'))).toHaveValue(22);
+    expect(screen.getByLabelText(rowLabel('overridden.NCP', '分类'))).toHaveValue('');
+    expect(screen.getByLabelText(rowLabel('overridden.NCP', '分类')))
+      .toHaveAccessibleDescription('原分类已不可用，请重新选择分类');
+    expect(screen.getByLabelText(rowLabel('overridden.NCP', '排序'))).toHaveValue(23);
+
+    await user.click(screen.getByRole('button', { name: '继续导入' }));
+    expect(run).toHaveBeenCalledTimes(2);
+  });
+
+  it('makes rows ineligible when categories empty and restores only inherited rows on reappearance', async () => {
+    const run = vi.fn(async () => completedResult());
+    useBulkCreateFiltersMock.mockReturnValue({ run, isPending: false });
+    const onOpenChange = vi.fn();
+    const onImported = vi.fn();
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <FilterBulkImportDialog
+        open
+        categories={categories}
+        filters={filters}
+        onOpenChange={onOpenChange}
+        onImported={onImported}
+      />,
+    );
+    await user.upload(screen.getByLabelText('NCP 文件（可多选）'), [
+      ncpFile(fixture02, 'empty-inherited.NCP'),
+      ncpFile(fixture33, 'empty-overridden.NCP'),
+    ]);
+    await screen.findByLabelText(rowLabel('empty-overridden.NCP', '分类'));
+    await user.selectOptions(
+      screen.getByLabelText(rowLabel('empty-overridden.NCP', '分类')),
+      monochromeCategory.id,
+    );
+
+    rerender(
+      <FilterBulkImportDialog
+        open
+        categories={[]}
+        filters={filters}
+        onOpenChange={onOpenChange}
+        onImported={onImported}
+      />,
+    );
+
+    expect(screen.getByLabelText('默认分类')).toHaveValue('');
+    expect(screen.getByLabelText(rowLabel('empty-inherited.NCP', '分类'))).toHaveValue('');
+    expect(screen.getByLabelText(rowLabel('empty-overridden.NCP', '分类'))).toHaveValue('');
+    expect(screen.getByLabelText(rowLabel('empty-inherited.NCP', '分类'))).toHaveAccessibleDescription('请选择分类');
+    expect(screen.getByLabelText(rowLabel('empty-overridden.NCP', '分类')))
+      .toHaveAccessibleDescription('原分类已不可用，请重新选择分类');
+    expect(screen.getByRole('button', { name: '导入可用项' })).toBeDisabled();
+    expect(screen.getByText(/其中 0 个当前可导入/)).toBeInTheDocument();
+    expect(run).not.toHaveBeenCalled();
+
+    rerender(
+      <FilterBulkImportDialog
+        open
+        categories={categories}
+        filters={filters}
+        onOpenChange={onOpenChange}
+        onImported={onImported}
+      />,
+    );
+
+    expect(screen.getByLabelText('默认分类')).toHaveValue(categoryFixture.id);
+    expect(screen.getByLabelText(rowLabel('empty-inherited.NCP', '分类'))).toHaveValue(categoryFixture.id);
+    expect(screen.getByLabelText(rowLabel('empty-inherited.NCP', '排序'))).toHaveValue(21);
+    expect(screen.getByLabelText(rowLabel('empty-overridden.NCP', '分类'))).toHaveValue('');
+    expect(screen.getByLabelText(rowLabel('empty-overridden.NCP', '排序'))).toHaveValue(22);
+  });
+
+  it.each([
+    ['replacement', [replacementCategory], replacementCategory.id],
+    ['removal', [], ''],
+  ])('reconciles category %s before held inspection materializes', async (_kind, nextCategories, expectedCategoryId) => {
+    const slowRead = deferred<ArrayBuffer>();
+    const slow = new File([fixture02], 'held-category.NCP', { type: 'application/octet-stream' });
+    Object.defineProperty(slow, 'arrayBuffer', { value: () => slowRead.promise });
+    const onOpenChange = vi.fn();
+    const onImported = vi.fn();
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <FilterBulkImportDialog
+        open
+        categories={categories}
+        filters={filters}
+        onOpenChange={onOpenChange}
+        onImported={onImported}
+      />,
+    );
+    await user.upload(screen.getByLabelText('NCP 文件（可多选）'), slow);
+
+    rerender(
+      <FilterBulkImportDialog
+        open
+        categories={nextCategories}
+        filters={filters}
+        onOpenChange={onOpenChange}
+        onImported={onImported}
+      />,
+    );
+    await act(async () => {
+      slowRead.resolve(fixture02.slice().buffer);
+      await slowRead.promise;
+    });
+
+    expect(await screen.findByLabelText(rowLabel('held-category.NCP', '分类')))
+      .toHaveValue(expectedCategoryId);
+    expect(screen.getByLabelText(rowLabel('held-category.NCP', '排序'))).toHaveValue(1);
+    if (!expectedCategoryId) {
+      expect(screen.getByRole('button', { name: '导入可用项' })).toBeDisabled();
+    }
   });
 
   it('ignores an older multi-file inspection that resolves after a replacement', async () => {
@@ -442,6 +666,36 @@ describe('FilterBulkImportDialog validation and import runs', () => {
     expect(screen.getByLabelText(rowLabel('c.NCP', '启用'))).toBeChecked();
     expect(screen.getByLabelText(rowLabel('b.NCP', '分类'))).toHaveValue(monochromeCategory.id);
     expect(screen.getByLabelText(rowLabel('b.NCP', '启用'))).not.toBeChecked();
+  });
+
+  it('preserves the completed outcome when the import callback throws', async () => {
+    const result = { createdCount: 1, failedCount: 0, paused: false } as const;
+    const run: Runner = vi.fn(async (
+      rows: readonly BulkFilterRow[],
+      onRow: BulkFilterRowUpdater,
+    ) => {
+      onRow(rows[0]!.id, { status: 'success', message: '已导入', retryable: false });
+      return result;
+    });
+    const onImported = vi.fn(() => {
+      throw new Error('consumer failed');
+    });
+    useBulkCreateFiltersMock.mockReturnValue({ run, isPending: false });
+    const { user } = renderDialog({ onImported });
+    await user.upload(
+      screen.getByLabelText('NCP 文件（可多选）'),
+      ncpFile(fixture02, 'completed.NCP'),
+    );
+    const name = await screen.findByLabelText(rowLabel('completed.NCP', '显示名称'));
+
+    await user.click(screen.getByRole('button', { name: '导入可用项' }));
+
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(onImported).toHaveBeenCalledWith(result);
+    expect(name).toBeDisabled();
+    expect(screen.getByText('已导入 1 个滤镜，0 个需要处理')).toBeInTheDocument();
+    expect(screen.queryByText('批量导入未完成，请重试')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '继续导入' })).toBeDisabled();
   });
 
   it.each([

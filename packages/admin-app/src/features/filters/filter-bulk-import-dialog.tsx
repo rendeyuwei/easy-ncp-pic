@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type ChangeEvent,
@@ -137,6 +138,7 @@ function RowCategoryControl({
 }) {
   const id = controlId(row, 'category', presentation);
   const errorId = `${id}-error`;
+  const categoryAvailable = categories.some((category) => category.id === row.categoryId);
   return (
     <div className="bulk-row-control">
       <select
@@ -149,6 +151,9 @@ function RowCategoryControl({
         onChange={(event) => onEdit('categoryId', event.target.value)}
       >
         {!row.categoryId ? <option value="">请选择</option> : null}
+        {row.categoryId && !categoryAvailable ? (
+          <option value={row.categoryId}>已移除分类</option>
+        ) : null}
         {categories.map((category) => (
           <option key={category.id} value={category.id}>{category.name}</option>
         ))}
@@ -235,19 +240,21 @@ function RowActions({
   row,
   pending,
   presentation,
+  retryEligible,
   onRemove,
   onRetry,
 }: {
   row: BulkFilterRow;
   pending: boolean;
   presentation: Presentation;
+  retryEligible: boolean;
   onRemove(): void;
   onRetry(): void;
 }) {
   const locked = rowIsLocked(row, pending);
   return (
     <div className="bulk-row-actions">
-      {row.status === 'failed' && row.retryable ? (
+      {row.status === 'failed' && row.retryable && retryEligible ? (
         <Button
           variant="secondary"
           size="compact"
@@ -336,32 +343,50 @@ export function FilterBulkImportDialog({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  useEffect(() => {
-    if (open && !defaultCategoryId && categories.length > 0) {
-      const categoryId = categories[0]!.id;
-      defaultCategoryRef.current = categoryId;
-      setDefaultCategoryId(categoryId);
-      setRows((current) => current.map((row) => {
-        if (row.categoryOverridden || row.status === 'success') return row;
-        const next = { ...row, categoryId };
-        return row.status === 'failed'
-          ? { ...next, status: 'ready', message: null, retryable: true }
-          : next;
-      }));
-      setRowErrors((current) => {
-        const next = { ...current };
-        for (const row of rows) {
-          if (!row.categoryOverridden && row.status !== 'success' && next[row.id]?.categoryId) {
-            const nextForRow = { ...next[row.id] };
-            delete nextForRow.categoryId;
-            if (Object.keys(nextForRow).length) next[row.id] = nextForRow;
-            else delete next[row.id];
-          }
+  useLayoutEffect(() => {
+    if (!open) return;
+    const availableCategoryIds = new Set(categories.map((category) => category.id));
+    const currentDefault = defaultCategoryRef.current;
+    const nextDefault = availableCategoryIds.has(currentDefault)
+      ? currentDefault
+      : categories[0]?.id ?? '';
+    defaultCategoryRef.current = nextDefault;
+    setDefaultCategoryId((current) => current === nextDefault ? current : nextDefault);
+    setRows((current) => {
+      let changed = false;
+      const next = current.map<BulkFilterRow>((row) => {
+        if (row.status === 'success') return row;
+        if (row.categoryOverridden) {
+          if (!row.categoryId || availableCategoryIds.has(row.categoryId)) return row;
+          changed = true;
+          return { ...row, categoryId: '' };
         }
-        return next;
+        if (row.categoryId === nextDefault) return row;
+        changed = true;
+        const updated: BulkFilterRow = { ...row, categoryId: nextDefault };
+        return row.status === 'failed'
+          ? { ...updated, status: 'ready', message: null, retryable: true }
+          : updated;
       });
-    }
-  }, [categories, defaultCategoryId, open, rows]);
+      return changed ? next : current;
+    });
+    setRowErrors((current) => {
+      let changed = false;
+      const next = { ...current };
+      for (const row of rows) {
+        const categoryRemainsValid = row.categoryId && availableCategoryIds.has(row.categoryId);
+        const inheritedReplacement = !row.categoryOverridden && Boolean(nextDefault);
+        if (row.status !== 'success' && (categoryRemainsValid || inheritedReplacement) && next[row.id]?.categoryId) {
+          const nextForRow = { ...next[row.id] };
+          delete nextForRow.categoryId;
+          if (Object.keys(nextForRow).length) next[row.id] = nextForRow;
+          else delete next[row.id];
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [categories, open, rows]);
 
   useEffect(() => {
     if (summary) summaryRef.current?.focus();
@@ -374,7 +399,6 @@ export function FilterBulkImportDialog({
 
   const requestClose = (next: boolean) => {
     if (runner.isPending) return;
-    if (!next) clear('');
     onOpenChange(next);
   };
 
@@ -516,6 +540,11 @@ export function FilterBulkImportDialog({
         slug: '',
         sortOrder: row.sortOrder,
       });
+      if (!categories.some((category) => category.id === row.categoryId)) {
+        errors.categoryId = row.categoryId
+          ? '原分类已不可用，请重新选择分类'
+          : '请选择分类';
+      }
       if (Object.keys(errors).length) errorsForRun[row.id] = errors;
       else runnableRows.push(row);
     }
@@ -533,8 +562,9 @@ export function FilterBulkImportDialog({
     const completedIds = new Set<string>();
     const total = runnableRows.length;
     setProgress({ completed: 0, total });
+    let result: BulkImportRunResult;
     try {
-      const result = await runner.run(runnableRows, (id, update) => {
+      result = await runner.run(runnableRows, (id, update) => {
         if (dialogGeneration.current !== generation) return;
         mergeRowUpdate(id, update);
         if (update.status !== 'importing' && !completedIds.has(id)) {
@@ -542,18 +572,24 @@ export function FilterBulkImportDialog({
           setProgress({ completed: completedIds.size, total });
         }
       });
-      if (dialogGeneration.current !== generation) return;
-      setHasRun(true);
-      setSummary(result.paused
-        ? `导入已暂停，已完成 ${completedIds.size} / ${total}`
-        : `已导入 ${result.createdCount} 个滤镜，${result.failedCount} 个需要处理`);
-      onImported(result);
     } catch {
       if (dialogGeneration.current !== generation) return;
       setHasRun(true);
       setSummary('批量导入未完成，请重试');
+      return;
     } finally {
       runStarting.current = false;
+    }
+
+    if (dialogGeneration.current !== generation) return;
+    setHasRun(true);
+    setSummary(result.paused
+      ? `导入已暂停，已完成 ${completedIds.size} / ${total}`
+      : `已导入 ${result.createdCount} 个滤镜，${result.failedCount} 个需要处理`);
+    try {
+      onImported(result);
+    } catch {
+      // Consumer notification failures must not rewrite the completed import outcome.
     }
   };
 
@@ -562,11 +598,22 @@ export function FilterBulkImportDialog({
     if (row) void runRows([row]);
   };
 
-  const runnableCount = rows.filter(isRunnable).length;
+  const availableCategoryIds = new Set(categories.map((category) => category.id));
+  const runnableCount = rows.filter((row) => (
+    isRunnable(row) && availableCategoryIds.has(row.categoryId)
+  )).length;
   const pending = runner.isPending;
 
   const rowControls = (row: BulkFilterRow, presentation: Presentation) => {
-    const errors = rowErrors[row.id] ?? {};
+    const storedErrors = rowErrors[row.id] ?? {};
+    const errors = row.status !== 'success' && !availableCategoryIds.has(row.categoryId)
+      ? {
+          ...storedErrors,
+          categoryId: row.categoryOverridden
+            ? '原分类已不可用，请重新选择分类'
+            : '请选择分类',
+        }
+      : storedErrors;
     const onEdit = (field: EditableField, value: string | boolean) => editRow(row.id, field, value);
     return {
       name: (
@@ -611,6 +658,7 @@ export function FilterBulkImportDialog({
           row={row}
           pending={pending}
           presentation={presentation}
+          retryEligible={availableCategoryIds.has(row.categoryId)}
           onRemove={() => removeRow(row.id)}
           onRetry={() => retryRow(row.id)}
         />
@@ -655,6 +703,7 @@ export function FilterBulkImportDialog({
                 disabled={pending || !categories.length}
                 onChange={(event) => changeDefaultCategory(event.target.value)}
               >
+                {!defaultCategoryId ? <option value="">无可用分类</option> : null}
                 {categories.map((category) => (
                   <option key={category.id} value={category.id}>{category.name}</option>
                 ))}

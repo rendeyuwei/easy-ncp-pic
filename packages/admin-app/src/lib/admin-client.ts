@@ -43,7 +43,7 @@ export interface AdminApi {
   createCategory(input: CategoryInput): Promise<AdminCategory>;
   updateCategory(id: string, input: CategoryInput): Promise<AdminCategory>;
   deleteCategory(id: string): Promise<void>;
-  listFilters(signal?: AbortSignal): Promise<AdminFilter[]>;
+  listFilters(signal?: AbortSignal, cache?: RequestCache): Promise<AdminFilter[]>;
   createFilter(input: FilterCreateInput): Promise<AdminFilter>;
   updateFilter(id: string, input: FilterPatch): Promise<AdminFilter>;
   deleteFilter(id: string): Promise<void>;
@@ -127,8 +127,8 @@ export class AdminApiClient implements AdminApi {
     );
   }
 
-  async listFilters(signal?: AbortSignal): Promise<AdminFilter[]> {
-    const body = await this.query('/api/admin/filters', parseFiltersResponse, signal);
+  async listFilters(signal?: AbortSignal, cache?: RequestCache): Promise<AdminFilter[]> {
+    const body = await this.query('/api/admin/filters', parseFiltersResponse, signal, cache);
     return body.filters;
   }
 
@@ -166,8 +166,13 @@ export class AdminApiClient implements AdminApi {
     this.csrfToken = session.csrfToken;
   }
 
-  private async query<T>(path: string, parse: Parser<T>, signal?: AbortSignal): Promise<T> {
-    const response = await this.send(path, { method: 'GET', signal });
+  private async query<T>(
+    path: string,
+    parse: Parser<T>,
+    signal?: AbortSignal,
+    cache?: RequestCache,
+  ): Promise<T> {
+    const response = await this.send(path, { method: 'GET', signal, cache });
     if (!response.ok) {
       const failure = await this.failure(response);
       if (failure.status === 401) this.clearAndNotifyUnauthorized();

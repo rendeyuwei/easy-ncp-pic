@@ -173,7 +173,7 @@ export function FilterPage() {
         open={bulkOpen}
         categories={categories.data ?? []}
         filters={filters.data ?? []}
-        filtersReady={filters.isSuccess}
+        filtersReady={filters.isSuccess && !filters.isFetching && !filters.isRefetchError}
         onOpenChange={setBulkOpen}
         onImported={(result) => {
           notify(

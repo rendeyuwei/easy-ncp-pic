@@ -14,7 +14,8 @@ import {
 } from '../features/filters/filter-bulk-import';
 import { useBulkCreateFilters } from '../features/filters/filter-queries';
 import { queryKeys } from '../features/query-keys';
-import { ApiFailure, type AdminApi, type FilterCreateInput } from '../lib/admin-client';
+import { AdminApiClient, ApiFailure, type AdminApi, type FilterCreateInput } from '../lib/admin-client';
+import type { AdminFilter } from '../lib/api-schema';
 import { SessionProvider } from '../session/session-provider';
 import { categoryFixture, filterFixture } from './fixtures';
 
@@ -511,6 +512,131 @@ describe('useBulkCreateFilters', () => {
     expect(listFilters).toHaveBeenCalledTimes(1);
     expect(reconciled).toEqual(authoritative);
     expect(queryClient.getQueryData(queryKeys.filters)).toEqual(authoritative);
+  });
+
+  it('prevents an older same-key query from overwriting reconciliation', async () => {
+    const stale = [{ ...filterFixture, id: 'stale-filter', sortOrder: 20 }];
+    const authoritative = [{ ...filterFixture, id: 'authoritative-filter', sortOrder: 41 }];
+    const olderResponse = deferred<typeof stale>();
+    const olderStarted = deferred<void>();
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    queryClient.setQueryData(queryKeys.filters, stale);
+    const olderQuery = queryClient.fetchQuery({
+      queryKey: queryKeys.filters,
+      queryFn: ({ signal }) => {
+        expect(signal).toBeInstanceOf(AbortSignal);
+        olderStarted.resolve();
+        return olderResponse.promise;
+      },
+    });
+    const olderSettled = olderQuery.catch((error: unknown) => error);
+    await olderStarted.promise;
+    const { result } = renderBulkCreateHook(
+      createApi(vi.fn(async () => filterFixture), vi.fn(async () => authoritative)),
+      queryClient,
+    );
+
+    await act(async () => {
+      await result.current.reconcile();
+    });
+    expect(queryClient.getQueryData(queryKeys.filters)).toEqual(authoritative);
+
+    olderResponse.resolve(stale);
+    await olderSettled;
+    expect(queryClient.getQueryData(queryKeys.filters)).toEqual(authoritative);
+  });
+
+  it('bypasses a cached pre-commit response during authoritative reconciliation', async () => {
+    const authoritative = [{
+      ...filterFixture,
+      id: 'committed-filter',
+      ncpSha256: 'ed53222f4a2329c3f42a2dd6391b4b62d1214b1e3eac917d9bd11a8f22f9e43f',
+    }];
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      if (String(input) === '/api/admin/session') {
+        return new Response(JSON.stringify({ csrfToken: 'csrf-token' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      const filters = init?.cache === 'no-store' ? authoritative : [];
+      return new Response(JSON.stringify({ filters }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    queryClient.setQueryData(queryKeys.filters, [filterFixture]);
+    const { result } = renderBulkCreateHook(new AdminApiClient(fetchImpl), queryClient);
+
+    let reconciled: AdminFilter[] | undefined;
+    await act(async () => {
+      reconciled = await result.current.reconcile();
+    });
+
+    expect(reconciled).toEqual(authoritative);
+    expect(queryClient.getQueryData(queryKeys.filters)).toEqual(authoritative);
+  });
+
+  it('aborts a held reconciliation on unmount without changing cached filters', async () => {
+    const cached = [{ ...filterFixture, id: 'cached-filter' }];
+    const authoritative = [{ ...filterFixture, id: 'late-authoritative-filter' }];
+    const held = deferred<typeof authoritative>();
+    const started = deferred<void>();
+    let reconciliationSignal: AbortSignal | undefined;
+    const listFilters: AdminApi['listFilters'] = (signal) => {
+      reconciliationSignal = signal;
+      started.resolve();
+      return held.promise;
+    };
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    queryClient.setQueryData(queryKeys.filters, cached);
+    const view = renderBulkCreateHook(
+      createApi(vi.fn(async () => filterFixture), listFilters),
+      queryClient,
+    );
+
+    let reconciliation!: Promise<AdminFilter[]>;
+    act(() => { reconciliation = view.result.current.reconcile(); });
+    const settled = reconciliation.catch((error: unknown) => error);
+    await started.promise;
+    view.unmount();
+
+    expect(reconciliationSignal).toBeInstanceOf(AbortSignal);
+    expect(reconciliationSignal?.aborted).toBe(true);
+    held.resolve(authoritative);
+    await settled;
+    expect(queryClient.getQueryData(queryKeys.filters)).toEqual(cached);
+  });
+
+  it('does not repopulate filters removed while reconciliation is held', async () => {
+    const authoritative = [{ ...filterFixture, id: 'late-authoritative-filter' }];
+    const held = deferred<typeof authoritative>();
+    const started = deferred<void>();
+    let reconciliationSignal: AbortSignal | undefined;
+    const listFilters: AdminApi['listFilters'] = (signal) => {
+      reconciliationSignal = signal;
+      started.resolve();
+      return held.promise;
+    };
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    queryClient.setQueryData(queryKeys.filters, [filterFixture]);
+    const { result } = renderBulkCreateHook(
+      createApi(vi.fn(async () => filterFixture), listFilters),
+      queryClient,
+    );
+
+    let reconciliation!: Promise<AdminFilter[]>;
+    act(() => { reconciliation = result.current.reconcile(); });
+    const settled = reconciliation.catch((error: unknown) => error);
+    await started.promise;
+    queryClient.removeQueries({ queryKey: queryKeys.filters });
+
+    expect(reconciliationSignal).toBeInstanceOf(AbortSignal);
+    expect(reconciliationSignal?.aborted).toBe(true);
+    held.resolve(authoritative);
+    await settled;
+    expect(queryClient.getQueryData(queryKeys.filters)).toBeUndefined();
   });
 
   it('leaves cached filters untouched when authoritative reconciliation fails', async () => {

@@ -273,6 +273,41 @@ describe('FilterBulkImportDialog inspection lifecycle', () => {
     expect(await screen.findByLabelText(rowLabel('after-ready.NCP', '排序'))).toHaveValue(21);
   });
 
+  it('keeps a materialized authoritative sort stable across unrelated filter renders', async () => {
+    const onOpenChange = vi.fn();
+    const onImported = vi.fn();
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <FilterBulkImportDialog
+        open
+        categories={categories}
+        filters={filters}
+        filtersReady
+        onOpenChange={onOpenChange}
+        onImported={onImported}
+      />,
+    );
+
+    await user.upload(
+      screen.getByLabelText('NCP 文件（可多选）'),
+      ncpFile(fixture02, 'stable-sort.NCP'),
+    );
+    expect(await screen.findByLabelText(rowLabel('stable-sort.NCP', '排序'))).toHaveValue(21);
+
+    rerender(
+      <FilterBulkImportDialog
+        open
+        categories={categories}
+        filters={[...filters, { ...filterFixture, id: 'new-filter', sortOrder: 41 }]}
+        filtersReady
+        onOpenChange={onOpenChange}
+        onImported={onImported}
+      />,
+    );
+
+    expect(screen.getByLabelText(rowLabel('stable-sort.NCP', '排序'))).toHaveValue(21);
+  });
+
   it('preserves state when a controlled close is declined and resets only after an actual close transition', async () => {
     const onOpenChange = vi.fn();
     const onImported = vi.fn();
@@ -861,9 +896,12 @@ describe('FilterBulkImportDialog validation and import runs', () => {
     expect(screen.getByLabelText(rowLabel(fileName, '显示名称'))).toBeDisabled();
   });
 
-  it('keeps an ambiguous row locked when authoritative reconciliation fails', async () => {
+  it.each([
+    ['fails', new Error('list unavailable')],
+    ['is aborted', Object.assign(new Error('reconciliation aborted'), { name: 'AbortError' })],
+  ])('keeps an ambiguous row locked when authoritative reconciliation %s', async (_kind, error) => {
     const reconcile = vi.fn(async () => {
-      throw new Error('list unavailable');
+      throw error;
     });
     const run: Runner = vi.fn(async (
       rows: readonly BulkFilterRow[],

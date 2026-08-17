@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ApiFailure, type FilterCreateInput, type FilterPatch } from '../../lib/admin-client';
 import type { AdminFilter } from '../../lib/api-schema';
@@ -17,6 +17,12 @@ function isTransient(error: unknown): boolean {
   return error.status === 0
     || error.status >= 500
     || (error.status >= 200 && error.status < 300 && error.code === 'INVALID_RESPONSE');
+}
+
+function reconciliationCancelled(): Error {
+  const error = new Error('Filter reconciliation was cancelled');
+  error.name = 'AbortError';
+  return error;
 }
 
 export function useFilters() {
@@ -54,8 +60,21 @@ export function useBulkCreateFilters(): {
   const queryClient = useQueryClient();
   const activeRuns = useRef(0);
   const activeReconciliations = useRef(0);
+  const mounted = useRef(false);
+  const reconciliationGeneration = useRef(0);
   const [isPending, setIsPending] = useState(false);
   const [isReconciling, setIsReconciling] = useState(false);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      reconciliationGeneration.current += 1;
+      if (activeReconciliations.current > 0) {
+        void queryClient.cancelQueries({ queryKey: queryKeys.filters, exact: true });
+      }
+    };
+  }, [queryClient]);
 
   const run = useCallback(async (
     rows: readonly BulkFilterRow[],
@@ -102,15 +121,24 @@ export function useBulkCreateFilters(): {
   }, [api, queryClient]);
 
   const reconcile = useCallback(async (): Promise<AdminFilter[]> => {
+    const generation = reconciliationGeneration.current + 1;
+    reconciliationGeneration.current = generation;
     activeReconciliations.current += 1;
     setIsReconciling(true);
     try {
-      const authoritativeFilters = await api.listFilters();
-      queryClient.setQueryData<AdminFilter[]>(queryKeys.filters, authoritativeFilters);
-      return authoritativeFilters;
+      await queryClient.cancelQueries({ queryKey: queryKeys.filters, exact: true });
+      if (!mounted.current || reconciliationGeneration.current !== generation) {
+        throw reconciliationCancelled();
+      }
+      return await queryClient.fetchQuery({
+        queryKey: queryKeys.filters,
+        queryFn: ({ signal }) => api.listFilters(signal, 'no-store'),
+        retry: false,
+        staleTime: 0,
+      });
     } finally {
       activeReconciliations.current -= 1;
-      if (activeReconciliations.current === 0) setIsReconciling(false);
+      if (mounted.current && activeReconciliations.current === 0) setIsReconciling(false);
     }
   }, [api, queryClient]);
 

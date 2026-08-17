@@ -24,6 +24,7 @@ export interface BulkFilterRow {
   enabledOverridden: boolean;
   status: BulkFilterStatus;
   message: string | null;
+  retryable: boolean;
 }
 
 export interface BulkFilterDefaults {
@@ -35,6 +36,7 @@ export interface BulkFilterDefaults {
 export interface BulkFilterRowUpdate {
   status: BulkFilterStatus;
   message: string | null;
+  retryable: boolean;
 }
 
 export interface BulkImportRunResult {
@@ -62,6 +64,7 @@ function invalidRow(file: File, index: number, defaults: BulkFilterDefaults, err
     message: error instanceof NcpInspectionError
       ? ncpInspectionMessage(error)
       : 'NCP 文件已损坏或格式无效',
+    retryable: false,
   };
 }
 
@@ -85,6 +88,7 @@ async function inspectBulkFilterFile(
       enabledOverridden: false,
       status: 'ready',
       message: null,
+      retryable: true,
     };
   } catch (error) {
     return invalidRow(file, index, defaults, error);
@@ -106,7 +110,7 @@ export async function inspectBulkFilterFiles(
 
   return rows.map((row) => {
     if (row.status !== 'ready' || row.ncpBase64 === null) return row;
-    if (seenBase64.has(row.ncpBase64)) return { ...row, status: 'duplicate' };
+    if (seenBase64.has(row.ncpBase64)) return { ...row, status: 'duplicate', retryable: false };
     seenBase64.add(row.ncpBase64);
     return row;
   });
@@ -142,27 +146,37 @@ export async function runBulkFilterImport(
   let failedCount = 0;
 
   for (const row of rows) {
-    if (row.status !== 'ready' && row.status !== 'failed') continue;
+    if (row.status !== 'ready' && !(row.status === 'failed' && row.retryable)) continue;
     const input = toFilterCreateInput(row);
     if (input === null) continue;
 
-    onRow(row.id, { status: 'importing', message: null });
+    onRow(row.id, { status: 'importing', message: null, retryable: false });
+    let failure: { error: unknown } | null = null;
     try {
       await create(input);
-      onRow(row.id, { status: 'success', message: '已导入' });
-      createdCount += 1;
     } catch (error) {
-      failedCount += 1;
-      const mapped = mapFilterCreateError(error);
-      onRow(row.id, {
-        status: error instanceof ApiFailure && error.code === 'DUPLICATE_NCP'
-          ? 'duplicate'
-          : 'failed',
-        message: mapped.summary ?? Object.values(mapped.fields)[0] ?? '导入失败，请重试',
-      });
-      if (error instanceof ApiFailure && error.status === 0) {
-        return { createdCount, failedCount, paused: true };
-      }
+      failure = { error };
+    }
+
+    if (failure === null) {
+      createdCount += 1;
+      onRow(row.id, { status: 'success', message: '已导入', retryable: false });
+      continue;
+    }
+
+    failedCount += 1;
+    const { error } = failure;
+    const mapped = mapFilterCreateError(error);
+    const duplicate = error instanceof ApiFailure && error.code === 'DUPLICATE_NCP';
+    onRow(row.id, {
+      status: duplicate ? 'duplicate' : 'failed',
+      message: error instanceof ApiFailure && error.code === 'SLUG_CONFLICT'
+        ? '请修改显示名称，或使用单个新增流程自定义 Slug'
+        : mapped.summary ?? Object.values(mapped.fields)[0] ?? '导入失败，请重试',
+      retryable: duplicate ? false : mapped.retryable,
+    });
+    if (error instanceof ApiFailure && error.status === 0) {
+      return { createdCount, failedCount, paused: true };
     }
   }
 

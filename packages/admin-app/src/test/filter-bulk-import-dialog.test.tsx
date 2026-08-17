@@ -698,6 +698,53 @@ describe('FilterBulkImportDialog validation and import runs', () => {
     expect(screen.getByRole('button', { name: '继续导入' })).toBeDisabled();
   });
 
+  it('observes a deferred import callback rejection without changing the completed outcome', async () => {
+    const callbackResult = deferred<void>();
+    const result = { createdCount: 1, failedCount: 0, paused: false } as const;
+    const importedResults: BulkImportRunResult[] = [];
+    const run: Runner = vi.fn(async (
+      rows: readonly BulkFilterRow[],
+      onRow: BulkFilterRowUpdater,
+    ) => {
+      onRow(rows[0]!.id, { status: 'success', message: '已导入', retryable: false });
+      return result;
+    });
+    const onImported: FilterBulkImportDialogProps['onImported'] = async (importedResult) => {
+      importedResults.push(importedResult);
+      await callbackResult.promise;
+    };
+    useBulkCreateFiltersMock.mockReturnValue({ run, isPending: false });
+    const { user } = renderDialog({ onImported });
+    await user.upload(
+      screen.getByLabelText('NCP 文件（可多选）'),
+      ncpFile(fixture02, 'async-completed.NCP'),
+    );
+    const name = await screen.findByLabelText(rowLabel('async-completed.NCP', '显示名称'));
+
+    await user.click(screen.getByRole('button', { name: '导入可用项' }));
+
+    expect(importedResults).toEqual([result]);
+    expect(name).toBeDisabled();
+    expect(screen.getByText('已导入 1 个滤镜，0 个需要处理')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '取消' })).toBeEnabled();
+
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      callbackResult.reject(new Error('async consumer failed'));
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+
+    expect(name).toBeDisabled();
+    expect(screen.getByText('已导入 1 个滤镜，0 个需要处理')).toBeInTheDocument();
+    expect(screen.queryByText('批量导入未完成，请重试')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '继续导入' })).toBeDisabled();
+  });
+
   it.each([
     ['显示名称', async (user: ReturnType<typeof userEvent.setup>, fileName: string) => {
       const input = screen.getByLabelText(rowLabel(fileName, '显示名称'));

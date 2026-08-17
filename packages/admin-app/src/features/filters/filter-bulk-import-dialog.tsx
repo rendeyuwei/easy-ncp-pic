@@ -32,7 +32,7 @@ export interface FilterBulkImportDialogProps {
   categories: AdminCategory[];
   filters: AdminFilter[];
   onOpenChange(open: boolean): void;
-  onImported(result: BulkImportRunResult): void;
+  onImported(result: BulkImportRunResult): void | Promise<void>;
 }
 
 type RowErrors = Record<string, FilterFieldErrors>;
@@ -587,7 +587,7 @@ export function FilterBulkImportDialog({
       ? `导入已暂停，已完成 ${completedIds.size} / ${total}`
       : `已导入 ${result.createdCount} 个滤镜，${result.failedCount} 个需要处理`);
     try {
-      onImported(result);
+      await onImported(result);
     } catch {
       // Consumer notification failures must not rewrite the completed import outcome.
     }

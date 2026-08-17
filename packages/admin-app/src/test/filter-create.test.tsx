@@ -42,6 +42,10 @@ function renderFilters() {
   return renderAdminApp(new AdminApiClient(), '/admin/filters');
 }
 
+function bulkRowLabel(fileName: string, field: string) {
+  return `${fileName} ${field}（桌面）`;
+}
+
 async function openCreate() {
   const buttons = await screen.findAllByRole('button', { name: '新增滤镜' });
   await waitFor(() => expect(buttons[0]).toBeEnabled());
@@ -152,12 +156,19 @@ describe('local-first filter creation', () => {
     renderFilters();
 
     const create = await screen.findByRole('button', { name: '新增滤镜' });
-    expect(create).toBeDisabled();
-    expect(create).toHaveAccessibleDescription('正在加载分类，暂时无法新增滤镜。');
+    const bulk = screen.getByRole('button', { name: '批量导入' });
+    for (const action of [bulk, create]) {
+      expect(action).toBeDisabled();
+      expect(action).toHaveAccessibleDescription('正在加载分类，暂时无法新增滤镜。');
+    }
     expect(screen.queryByText('发布滤镜前，请先创建至少一个分类。')).not.toBeInTheDocument();
 
     release.resolve();
-    await waitFor(() => expect(create).toBeEnabled());
+    await waitFor(() => {
+      expect(bulk).toBeEnabled();
+      expect(create).toBeEnabled();
+    });
+    expect(bulk).not.toHaveAccessibleDescription();
     expect(create).not.toHaveAccessibleDescription();
   });
 
@@ -175,22 +186,155 @@ describe('local-first filter creation', () => {
     expect(await screen.findByRole('heading', { name: '无法加载滤镜' })).toBeInTheDocument();
     expect(attempts).toBe(2);
     const create = screen.getByRole('button', { name: '新增滤镜' });
-    expect(create).toBeDisabled();
-    expect(create).toHaveAccessibleDescription('分类加载失败，请重试后新增滤镜。');
+    const bulk = screen.getByRole('button', { name: '批量导入' });
+    for (const action of [bulk, create]) {
+      expect(action).toBeDisabled();
+      expect(action).toHaveAccessibleDescription('分类加载失败，请重试后新增滤镜。');
+    }
     expect(screen.queryByText('发布滤镜前，请先创建至少一个分类。')).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: '重试' }));
     expect(await screen.findByRole('heading', { name: '暂无滤镜' })).toBeInTheDocument();
     expect(attempts).toBe(3);
+    expect(bulk).toBeEnabled();
     expect(create).toBeEnabled();
     await user.click(create);
     const dialog = screen.getByRole('dialog', { name: '新增滤镜' });
     expect(within(dialog).queryByRole('link', { name: '前往分类管理' })).not.toBeInTheDocument();
   });
 
-  it('links to category management and makes save unavailable when no category exists', async () => {
+  it('bulk imports current rows sequentially, reports partial success, and refreshes the list once', async () => {
+    const monochromeCategory = {
+      ...categoryFixture,
+      id: 'category-monochrome',
+      name: '黑白',
+      slug: 'monochrome',
+      sortOrder: 20,
+    };
+    const existing = filter({ sortOrder: 41 });
+    let listRequests = 0;
+    let posts = 0;
+    server.use(
+      http.get('/api/admin/categories', () => HttpResponse.json({
+        categories: [categoryFixture, monochromeCategory],
+      })),
+      http.get('/api/admin/filters', () => {
+        listRequests += 1;
+        return HttpResponse.json({ filters: listRequests === 1 ? [existing] : [
+          existing,
+          filter({ id: 'filter-bulk-created', displayName: 'Fuji Astia Bulk', sortOrder: 42 }),
+        ] });
+      }),
+      http.post('/api/admin/filters', async ({ request }) => {
+        posts += 1;
+        const body = await request.json() as Record<string, unknown>;
+        if (posts === 1) {
+          expect(body).toMatchObject({
+            displayName: 'Fuji Astia',
+            categoryId: categoryFixture.id,
+            sortOrder: 42,
+          });
+          return HttpResponse.json({
+            filter: filter({ id: 'filter-bulk-created', displayName: 'Fuji Astia', sortOrder: 42 }),
+          }, { status: 201 });
+        }
+        expect(body).toMatchObject({
+          displayName: 'SHING TokugawaTone2',
+          categoryId: monochromeCategory.id,
+          sortOrder: 43,
+        });
+        return HttpResponse.json({
+          code: 'DUPLICATE_NCP',
+          message: 'already exists',
+        }, { status: 409 });
+      }),
+    );
+    const { user } = renderFilters();
+
+    await user.click(await screen.findByRole('button', { name: '批量导入' }));
+    const dialog = screen.getByRole('dialog', { name: '批量导入滤镜' });
+    await user.upload(within(dialog).getByLabelText('NCP 文件（可多选）'), [
+      ncpFile(fixture02, 'PICCON02.NCP'),
+      ncpFile(fixture33, 'PICCON33.NCP'),
+    ]);
+
+    const firstOrder = await within(dialog).findByLabelText(bulkRowLabel('PICCON02.NCP', '排序'));
+    const secondOrder = within(dialog).getByLabelText(bulkRowLabel('PICCON33.NCP', '排序'));
+    const secondCategory = within(dialog).getByLabelText(bulkRowLabel('PICCON33.NCP', '分类'));
+    expect(firstOrder).toHaveValue(42);
+    expect(secondOrder).toHaveValue(43);
+    expect(secondCategory).toHaveDisplayValue('胶片');
+    expect(within(secondCategory).getByRole('option', { name: '黑白' })).toHaveValue(monochromeCategory.id);
+    await user.selectOptions(secondCategory, monochromeCategory.id);
+
+    await user.click(within(dialog).getByRole('button', { name: '导入可用项' }));
+
+    await waitFor(() => {
+      const notificationCopies = screen.getAllByText('已导入 1 个滤镜，1 个需要处理')
+        .filter((message) => !dialog.contains(message));
+      expect(notificationCopies).toHaveLength(1);
+      expect(notificationCopies[0]?.parentElement).toHaveClass('notification--success');
+    });
+    expect(within(dialog).getByText('已导入 1 个滤镜，1 个需要处理')).toBeInTheDocument();
+    expect(within(dialog).getAllByText('已存在').length).toBeGreaterThan(0);
+    expect(dialog).toBeInTheDocument();
+    expect(posts).toBe(2);
+    await waitFor(() => expect(listRequests).toBe(2));
+  });
+
+  it('reports a paused bulk run without treating untouched rows as completed failures', async () => {
+    let posts = 0;
+    server.use(
+      http.get('/api/admin/filters', () => HttpResponse.json({ filters: [] })),
+      http.post('/api/admin/filters', () => {
+        posts += 1;
+        if (posts === 1) {
+          return HttpResponse.json({
+            filter: filter({ id: 'filter-before-pause', displayName: 'Fuji Astia' }),
+          }, { status: 201 });
+        }
+        return HttpResponse.error();
+      }),
+    );
+    const { user } = renderFilters();
+
+    await user.click(await screen.findByRole('button', { name: '批量导入' }));
+    const dialog = screen.getByRole('dialog', { name: '批量导入滤镜' });
+    await user.upload(within(dialog).getByLabelText('NCP 文件（可多选）'), [
+      ncpFile(fixture02, 'PICCON02.NCP'),
+      ncpFile(fixture33, 'PICCON33.NCP'),
+    ]);
+    await within(dialog).findByLabelText(bulkRowLabel('PICCON33.NCP', '显示名称'));
+
+    await user.click(within(dialog).getByRole('button', { name: '导入可用项' }));
+
+    await waitFor(() => {
+      const notificationCopies = screen
+        .queryAllByText('导入已暂停，已导入 1 个滤镜，请检查未完成项')
+        .filter((message) => !dialog.contains(message));
+      expect(notificationCopies).toHaveLength(1);
+      expect(notificationCopies[0]?.parentElement).toHaveClass('notification--info');
+    });
+    expect(within(dialog).getByText('导入已暂停，已完成 2 / 2')).toBeInTheDocument();
+    expect(dialog).toBeInTheDocument();
+    expect(posts).toBe(2);
+  });
+
+  it('keeps both create actions ready and explains their prerequisites when no category exists', async () => {
     server.use(http.get('/api/admin/categories', () => HttpResponse.json({ categories: [] })));
     const { user } = renderFilters();
+
+    const bulk = await screen.findByRole('button', { name: '批量导入' });
+    const create = screen.getByRole('button', { name: '新增滤镜' });
+    await waitFor(() => {
+      expect(bulk).toBeEnabled();
+      expect(create).toBeEnabled();
+    });
+    await user.click(bulk);
+    const bulkDialog = screen.getByRole('dialog', { name: '批量导入滤镜' });
+    expect(within(bulkDialog).getByText('导入滤镜前，请先创建至少一个分类。')).toBeInTheDocument();
+    expect(within(bulkDialog).getByLabelText('默认分类')).toBeDisabled();
+    await user.click(within(bulkDialog).getByRole('button', { name: '取消' }));
 
     const dialog = await openCreate();
     const link = within(dialog).getByRole('link', { name: '前往分类管理' });

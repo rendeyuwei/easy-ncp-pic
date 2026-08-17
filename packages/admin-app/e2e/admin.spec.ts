@@ -1,7 +1,8 @@
 import { fileURLToPath } from 'node:url';
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Page, type Route } from '@playwright/test';
 
-const fixturePath = fileURLToPath(new URL('../../ncp-parser/test/fixtures/PICCON02.NCP', import.meta.url));
+const fixture02Path = fileURLToPath(new URL('../../ncp-parser/test/fixtures/PICCON02.NCP', import.meta.url));
+const fixture33Path = fileURLToPath(new URL('../../ncp-parser/test/fixtures/PICCON33.NCP', import.meta.url));
 
 async function login(page: Page) {
   await page.goto('/admin/login');
@@ -20,6 +21,62 @@ async function useResponsiveNavigation(page: Page, projectName: string, destinat
     await page.getByRole('navigation', { name: '移动管理导航' }).getByRole('link', { name: destination }).click();
   }
   await expect(page.getByRole('heading', { name: destination, exact: true })).toBeVisible();
+}
+
+async function cleanupBulkImportRecords(
+  page: Page,
+  filterNames: readonly string[],
+  categoryNames: readonly string[],
+) {
+  const failures = await page.evaluate(async ({ filtersToDelete, categoriesToDelete }) => {
+    const cleanupFailures: string[] = [];
+    try {
+      const sessionResponse = await fetch('/api/admin/session');
+      const session = await sessionResponse.json() as { csrfToken?: string };
+      if (!sessionResponse.ok || !session.csrfToken) {
+        return [`session: ${sessionResponse.status}`];
+      }
+      const headers = { 'x-csrf-token': session.csrfToken };
+      const filtersResponse = await fetch('/api/admin/filters');
+      if (!filtersResponse.ok) {
+        cleanupFailures.push(`filters list: ${filtersResponse.status}`);
+      } else {
+        const filtersBody = await filtersResponse.json() as {
+          filters?: Array<{ id: string; displayName: string }>;
+        };
+        for (const filter of filtersBody.filters ?? []) {
+          if (!filtersToDelete.includes(filter.displayName)) continue;
+          const response = await fetch(`/api/admin/filters/${encodeURIComponent(filter.id)}`, {
+            method: 'DELETE',
+            headers,
+          });
+          if (!response.ok) cleanupFailures.push(`filter ${filter.displayName}: ${response.status}`);
+        }
+      }
+
+      const categoriesResponse = await fetch('/api/admin/categories');
+      if (!categoriesResponse.ok) {
+        cleanupFailures.push(`categories list: ${categoriesResponse.status}`);
+      } else {
+        const categoriesBody = await categoriesResponse.json() as {
+          categories?: Array<{ id: string; name: string }>;
+        };
+        for (const category of categoriesBody.categories ?? []) {
+          if (!categoriesToDelete.includes(category.name)) continue;
+          const response = await fetch(`/api/admin/categories/${encodeURIComponent(category.id)}`, {
+            method: 'DELETE',
+            headers,
+          });
+          if (!response.ok) cleanupFailures.push(`category ${category.name}: ${response.status}`);
+        }
+      }
+    } catch (error) {
+      cleanupFailures.push(error instanceof Error ? error.message : String(error));
+    }
+    return cleanupFailures;
+  }, { filtersToDelete: filterNames, categoriesToDelete: categoryNames });
+
+  expect.soft(failures, 'bulk import records should be removed during cleanup').toEqual([]);
 }
 
 test.describe('desktop lifecycle', () => {
@@ -48,7 +105,7 @@ test.describe('desktop lifecycle', () => {
     await page.getByRole('button', { name: '新增滤镜' }).first().click();
 
     const createDialog = page.getByRole('dialog', { name: '新增滤镜' });
-    await createDialog.getByLabel('NCP 文件').setInputFiles(fixturePath);
+    await createDialog.getByLabel('NCP 文件').setInputFiles(fixture02Path);
     await expect(createDialog.getByRole('region', { name: 'NCP 详情' })).toBeVisible();
     await expect(createDialog.getByRole('status')).toContainText('当前版本支持此 NCP');
     await expect(createDialog.getByLabel('显示名称')).toHaveValue('Fuji Astia');
@@ -96,6 +153,92 @@ test.describe('desktop lifecycle', () => {
     await page.getByRole('dialog', { name: '删除分类' }).getByRole('button', { name: '删除分类' }).click();
     await expect(page.getByText('分类已删除')).toBeVisible();
     await expect(page.getByRole('table', { name: '分类列表' })).toHaveCount(0);
+  });
+
+  test('bulk imports two genuine NCP filters sequentially into different categories', async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== 'desktop', 'The shared database lifecycle runs once on desktop.');
+
+    const unique = `${Date.now()}-${process.pid}`;
+    const firstCategoryName = `Bulk Film E2E ${unique}`;
+    const secondCategoryName = `Bulk Mono E2E ${unique}`;
+    const firstFilterName = `Bulk Astia E2E ${unique}`;
+    const secondFilterName = `Bulk Tokugawa E2E ${unique}`;
+    let activeFilterPosts = 0;
+    let maximumActiveFilterPosts = 0;
+    let filterPosts = 0;
+    const observeSequentialPosts = async (route: Route) => {
+      const request = route.request();
+      if (request.method() !== 'POST' || new URL(request.url()).pathname !== '/api/admin/filters') {
+        await route.continue();
+        return;
+      }
+      filterPosts += 1;
+      activeFilterPosts += 1;
+      maximumActiveFilterPosts = Math.max(maximumActiveFilterPosts, activeFilterPosts);
+      try {
+        const response = await route.fetch();
+        await route.fulfill({ response });
+      } finally {
+        activeFilterPosts -= 1;
+      }
+    };
+
+    await login(page);
+    try {
+      await page.getByRole('navigation', { name: '主管理导航' }).getByRole('link', { name: '分类' }).click();
+      for (const [name, slug, sortOrder] of [
+        [firstCategoryName, `bulk-film-e2e-${unique}`, '101'],
+        [secondCategoryName, `bulk-mono-e2e-${unique}`, '102'],
+      ] as const) {
+        await page.getByRole('button', { name: '新增分类' }).first().click();
+        const categoryDialog = page.getByRole('dialog', { name: '新增分类' });
+        await categoryDialog.getByLabel('名称').fill(name);
+        await categoryDialog.getByLabel('Slug（可选）').fill(slug);
+        await categoryDialog.getByLabel('排序').fill(sortOrder);
+        await categoryDialog.getByRole('button', { name: '保存分类' }).click();
+        await expect(page.getByRole('table', { name: '分类列表' }).getByText(name, { exact: true })).toBeVisible();
+      }
+
+      await page.route('**/api/admin/filters', observeSequentialPosts);
+      await page.getByRole('navigation', { name: '主管理导航' }).getByRole('link', { name: '滤镜' }).click();
+      await page.getByRole('button', { name: '批量导入' }).click();
+
+      const bulkDialog = page.getByRole('dialog', { name: '批量导入滤镜' });
+      await bulkDialog.getByLabel('默认分类').selectOption({ label: firstCategoryName });
+      await bulkDialog.getByLabel('NCP 文件（可多选）').setInputFiles([fixture02Path, fixture33Path]);
+      const firstName = bulkDialog.getByLabel('PICCON02.NCP 显示名称（桌面）');
+      const firstCategory = bulkDialog.getByLabel('PICCON02.NCP 分类（桌面）');
+      const secondName = bulkDialog.getByLabel('PICCON33.NCP 显示名称（桌面）');
+      const secondCategory = bulkDialog.getByLabel('PICCON33.NCP 分类（桌面）');
+      await expect(firstName).toHaveValue('Fuji Astia');
+      await expect(secondName).toHaveValue('SHING TokugawaTone2');
+      await expect(firstCategory.locator('option:checked')).toHaveText(firstCategoryName);
+      await firstName.fill(firstFilterName);
+      await secondName.fill(secondFilterName);
+      await secondCategory.selectOption({ label: secondCategoryName });
+      await expect(secondCategory.locator('option:checked')).toHaveText(secondCategoryName);
+
+      await bulkDialog.getByRole('button', { name: '导入可用项' }).click();
+
+      await expect(bulkDialog.getByText('已导入 2 个滤镜，0 个需要处理')).toBeVisible();
+      expect(filterPosts).toBe(2);
+      expect(maximumActiveFilterPosts).toBe(1);
+      await bulkDialog.getByRole('button', { name: '取消' }).click();
+      await expect(bulkDialog).toHaveCount(0);
+
+      const filterTable = page.getByRole('table', { name: '滤镜列表' });
+      const firstRow = filterTable.getByRole('row').filter({ hasText: firstFilterName });
+      const secondRow = filterTable.getByRole('row').filter({ hasText: secondFilterName });
+      await expect(firstRow).toContainText(firstCategoryName);
+      await expect(secondRow).toContainText(secondCategoryName);
+    } finally {
+      await page.unroute('**/api/admin/filters', observeSequentialPosts);
+      await cleanupBulkImportRecords(
+        page,
+        [firstFilterName, secondFilterName],
+        [firstCategoryName, secondCategoryName],
+      );
+    }
   });
 });
 

@@ -12,7 +12,7 @@ import {
   toFilterCreateInput,
   type BulkFilterRow,
 } from '../features/filters/filter-bulk-import';
-import { useBulkCreateFilters } from '../features/filters/filter-queries';
+import { useBulkCreateFilters, useFilters } from '../features/filters/filter-queries';
 import { queryKeys } from '../features/query-keys';
 import { AdminApiClient, ApiFailure, type AdminApi, type FilterCreateInput } from '../lib/admin-client';
 import type { AdminFilter } from '../lib/api-schema';
@@ -96,6 +96,18 @@ function renderBulkCreateHook(api: AdminApi, queryClient: QueryClient) {
   }
 
   return renderHook(() => useBulkCreateFilters(), { wrapper: Wrapper });
+}
+
+function renderFilterHooks(api: AdminApi, queryClient: QueryClient) {
+  function Wrapper({ children }: PropsWithChildren) {
+    return createElement(
+      QueryClientProvider,
+      { client: queryClient },
+      createElement(SessionProvider, { api, queryClient }, children),
+    );
+  }
+
+  return renderHook(() => ({ filters: useFilters(), bulk: useBulkCreateFilters() }), { wrapper: Wrapper });
 }
 
 describe('inspectBulkFilterFiles', () => {
@@ -544,6 +556,102 @@ describe('useBulkCreateFilters', () => {
     olderResponse.resolve(stale);
     await olderSettled;
     expect(queryClient.getQueryData(queryKeys.filters)).toEqual(authoritative);
+  });
+
+  it('owns a normal same-key fetch started while reconciliation cancellation is held', async () => {
+    const initial = [{ ...filterFixture, id: 'initial-filter' }];
+    const authoritative = [{
+      ...filterFixture,
+      id: 'committed-filter',
+      ncpSha256: 'ed53222f4a2329c3f42a2dd6391b4b62d1214b1e3eac917d9bd11a8f22f9e43f',
+    }];
+    const cachedResponse = deferred<Response>();
+    const cancellation = deferred<void>();
+    const filterRequestCaches: Array<RequestCache | undefined> = [];
+    let filterRequests = 0;
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      if (String(input) === '/api/admin/session') {
+        return new Response(JSON.stringify({ csrfToken: 'csrf-token' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      filterRequests += 1;
+      filterRequestCaches.push(init?.cache);
+      if (filterRequests === 1) {
+        return new Response(JSON.stringify({ filters: initial }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      if (init?.cache === 'no-store') {
+        return new Response(JSON.stringify({ filters: authoritative }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      return cachedResponse.promise;
+    });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const view = renderFilterHooks(new AdminApiClient(fetchImpl), queryClient);
+    await waitFor(() => {
+      expect(view.result.current.filters.isSuccess).toBe(true);
+      expect(view.result.current.filters.isFetching).toBe(false);
+    });
+    vi.spyOn(queryClient, 'cancelQueries').mockImplementationOnce(() => cancellation.promise);
+
+    let reconciliation!: Promise<AdminFilter[]>;
+    act(() => { reconciliation = view.result.current.bulk.reconcile(); });
+    await waitFor(() => expect(queryClient.cancelQueries).toHaveBeenCalledTimes(1));
+    let normalFetch!: ReturnType<typeof view.result.current.filters.refetch>;
+    act(() => { normalFetch = view.result.current.filters.refetch(); });
+    await waitFor(() => expect(view.result.current.filters.isFetching).toBe(true));
+
+    cancellation.resolve();
+    cachedResponse.resolve(new Response(JSON.stringify({ filters: [] }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+    let reconciled: AdminFilter[] | undefined;
+    await act(async () => {
+      const [filters] = await Promise.all([reconciliation, normalFetch]);
+      reconciled = filters;
+    });
+
+    expect(reconciled).toEqual(authoritative);
+    expect(queryClient.getQueryData(queryKeys.filters)).toEqual(authoritative);
+    expect(filterRequestCaches.slice(1)).toEqual(['no-store']);
+  });
+
+  it('invalidates reconciliation ownership when filters are removed during held cancellation', async () => {
+    const cancellation = deferred<void>();
+    let filterRequests = 0;
+    const listFilters: AdminApi['listFilters'] = async () => {
+      filterRequests += 1;
+      return [filterFixture];
+    };
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const view = renderFilterHooks(
+      createApi(vi.fn(async () => filterFixture), listFilters),
+      queryClient,
+    );
+    await waitFor(() => {
+      expect(view.result.current.filters.isSuccess).toBe(true);
+      expect(view.result.current.filters.isFetching).toBe(false);
+    });
+    expect(filterRequests).toBe(1);
+    vi.spyOn(queryClient, 'cancelQueries').mockImplementationOnce(() => cancellation.promise);
+
+    let reconciliation!: Promise<AdminFilter[]>;
+    act(() => { reconciliation = view.result.current.bulk.reconcile(); });
+    const settled = reconciliation.catch((error: unknown) => error);
+    await waitFor(() => expect(queryClient.cancelQueries).toHaveBeenCalledTimes(1));
+    queryClient.removeQueries({ queryKey: queryKeys.filters });
+    cancellation.resolve();
+    await settled;
+
+    expect(filterRequests).toBe(1);
+    expect(queryClient.getQueryData(queryKeys.filters)).toBeUndefined();
   });
 
   it('bypasses a cached pre-commit response during authoritative reconciliation', async () => {

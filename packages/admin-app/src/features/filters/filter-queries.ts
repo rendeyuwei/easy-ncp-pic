@@ -19,17 +19,11 @@ function isTransient(error: unknown): boolean {
     || (error.status >= 200 && error.status < 300 && error.code === 'INVALID_RESPONSE');
 }
 
-function reconciliationCancelled(): Error {
-  const error = new Error('Filter reconciliation was cancelled');
-  error.name = 'AbortError';
-  return error;
-}
-
 export function useFilters() {
-  const { api } = useSession();
+  const { filterCatalog } = useSession();
   return useQuery({
     queryKey: queryKeys.filters,
-    queryFn: ({ signal }) => api.listFilters(signal),
+    queryFn: ({ signal }) => filterCatalog.load(signal),
     retry: (count, error) => count < 1 && isTransient(error),
     retryDelay: 0,
   });
@@ -56,12 +50,11 @@ export function useBulkCreateFilters(): {
   isPending: boolean;
   isReconciling: boolean;
 } {
-  const { api } = useSession();
+  const { api, filterCatalog } = useSession();
   const queryClient = useQueryClient();
   const activeRuns = useRef(0);
   const activeReconciliations = useRef(0);
   const mounted = useRef(false);
-  const reconciliationGeneration = useRef(0);
   const [isPending, setIsPending] = useState(false);
   const [isReconciling, setIsReconciling] = useState(false);
 
@@ -69,12 +62,8 @@ export function useBulkCreateFilters(): {
     mounted.current = true;
     return () => {
       mounted.current = false;
-      reconciliationGeneration.current += 1;
-      if (activeReconciliations.current > 0) {
-        void queryClient.cancelQueries({ queryKey: queryKeys.filters, exact: true });
-      }
     };
-  }, [queryClient]);
+  }, []);
 
   const run = useCallback(async (
     rows: readonly BulkFilterRow[],
@@ -121,26 +110,15 @@ export function useBulkCreateFilters(): {
   }, [api, queryClient]);
 
   const reconcile = useCallback(async (): Promise<AdminFilter[]> => {
-    const generation = reconciliationGeneration.current + 1;
-    reconciliationGeneration.current = generation;
     activeReconciliations.current += 1;
     setIsReconciling(true);
     try {
-      await queryClient.cancelQueries({ queryKey: queryKeys.filters, exact: true });
-      if (!mounted.current || reconciliationGeneration.current !== generation) {
-        throw reconciliationCancelled();
-      }
-      return await queryClient.fetchQuery({
-        queryKey: queryKeys.filters,
-        queryFn: ({ signal }) => api.listFilters(signal, 'no-store'),
-        retry: false,
-        staleTime: 0,
-      });
+      return await filterCatalog.reconcile();
     } finally {
       activeReconciliations.current -= 1;
       if (mounted.current && activeReconciliations.current === 0) setIsReconciling(false);
     }
-  }, [api, queryClient]);
+  }, [filterCatalog]);
 
   return { run, reconcile, isPending, isReconciling };
 }

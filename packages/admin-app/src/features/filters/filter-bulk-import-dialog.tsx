@@ -26,12 +26,11 @@ import {
 } from './filter-bulk-import';
 import { filterClientErrors, type FilterFieldErrors } from './filter-form';
 import { useBulkCreateFilters } from './filter-queries';
+import { useFilterCatalog } from '../../session/session-provider';
 
 export interface FilterBulkImportDialogProps {
   open: boolean;
   categories: AdminCategory[];
-  filters: AdminFilter[];
-  filtersReady: boolean;
   onOpenChange(open: boolean): void;
   onImported(result: BulkImportRunResult): void | Promise<void>;
 }
@@ -304,12 +303,11 @@ function MobileField({ label, children }: { label: string; children: ReactNode }
 export function FilterBulkImportDialog({
   open,
   categories,
-  filters,
-  filtersReady,
   onOpenChange,
   onImported,
 }: FilterBulkImportDialogProps) {
   const runner = useBulkCreateFilters();
+  const filterCatalog = useFilterCatalog();
   const [rows, setRows] = useState<BulkFilterRow[]>([]);
   const [defaultCategoryId, setDefaultCategoryId] = useState(categories[0]?.id ?? '');
   const [defaultEnabled, setDefaultEnabled] = useState(true);
@@ -321,8 +319,6 @@ export function FilterBulkImportDialog({
   const [discardConfirmationOpen, setDiscardConfirmationOpen] = useState(false);
   const defaultCategoryRef = useRef(categories[0]?.id ?? '');
   const defaultEnabledRef = useRef(true);
-  const filtersRef = useRef(filters);
-  const filtersReadyRef = useRef(filtersReady);
   const inspectionGeneration = useRef(0);
   const dialogGeneration = useRef(0);
   const wasOpen = useRef(false);
@@ -336,8 +332,7 @@ export function FilterBulkImportDialog({
     const close = content?.querySelector<HTMLButtonElement>('.dialog__close');
     if (close) close.disabled = hookBusy;
   }, [hookBusy]);
-  filtersRef.current = filters;
-  filtersReadyRef.current = filtersReady;
+  const filtersReady = filterCatalog.capture() !== null;
 
   const clear = (categoryId: string) => {
     inspectionGeneration.current += 1;
@@ -435,7 +430,8 @@ export function FilterBulkImportDialog({
   };
 
   const changeFiles = async (event: ChangeEvent<HTMLInputElement>) => {
-    if (!filtersReadyRef.current) {
+    const catalogSnapshot = filterCatalog.capture();
+    if (!catalogSnapshot) {
       event.target.value = '';
       setSelectionError('现有滤镜尚未加载完成，暂时无法选择文件或计算排序。');
       return;
@@ -456,12 +452,12 @@ export function FilterBulkImportDialog({
       const next = await inspectBulkFilterFiles(Array.from(files), {
         categoryId: inspectedCategoryId,
         isEnabled: defaultEnabledRef.current,
-        startingSortOrder: startingSortOrder(inspectedCategoryId, filtersRef.current),
+        startingSortOrder: startingSortOrder(inspectedCategoryId, catalogSnapshot.filters),
       });
-      if (inspectionGeneration.current !== generation || !filtersReadyRef.current) return;
+      if (inspectionGeneration.current !== generation || !catalogSnapshot.isCurrent()) return;
       const latestCategoryId = defaultCategoryRef.current;
       const latestEnabled = defaultEnabledRef.current;
-      const latestSortOrder = startingSortOrder(latestCategoryId, filtersRef.current);
+      const latestSortOrder = startingSortOrder(latestCategoryId, catalogSnapshot.filters);
       const materialized = next.map((row, index) => ({
         ...row,
         categoryId: latestCategoryId,

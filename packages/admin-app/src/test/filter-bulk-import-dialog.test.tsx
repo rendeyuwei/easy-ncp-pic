@@ -14,12 +14,18 @@ import type {
   BulkFilterRowUpdater,
   BulkImportRunResult,
 } from '../features/filters/filter-bulk-import';
+import type { FilterCatalog } from '../features/filters/filter-catalog';
 import { useBulkCreateFilters } from '../features/filters/filter-queries';
 import type { AdminCategory, AdminFilter } from '../lib/api-schema';
+import { useFilterCatalog } from '../session/session-provider';
 import { categoryFixture, filterFixture } from './fixtures';
 
 vi.mock('../features/filters/filter-queries', () => ({
   useBulkCreateFilters: vi.fn(),
+}));
+
+vi.mock('../session/session-provider', () => ({
+  useFilterCatalog: vi.fn(),
 }));
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -85,6 +91,32 @@ type Runner = ReturnType<typeof useBulkCreateFilters>['run'];
 type RunnerState = ReturnType<typeof useBulkCreateFilters>;
 
 const useBulkCreateFiltersMock = vi.mocked(useBulkCreateFilters);
+const useFilterCatalogMock = vi.mocked(useFilterCatalog);
+let catalogEpoch = 0;
+let catalogFilters: readonly AdminFilter[] = filters;
+let catalogReady = true;
+
+function setCatalog(nextFilters: readonly AdminFilter[], ready: boolean) {
+  catalogFilters = nextFilters;
+  catalogReady = ready;
+  catalogEpoch += 1;
+}
+
+const testCatalog: FilterCatalog = {
+  activate: vi.fn(),
+  load: vi.fn(async () => [...catalogFilters]),
+  capture: () => {
+    if (!catalogReady) return null;
+    const capturedEpoch = catalogEpoch;
+    const capturedFilters = catalogFilters;
+    return {
+      filters: capturedFilters,
+      isCurrent: () => catalogReady && catalogEpoch === capturedEpoch,
+    };
+  },
+  reconcile: vi.fn(async () => [...catalogFilters]),
+  dispose: vi.fn(),
+};
 
 function completedResult(): BulkImportRunResult {
   return { createdCount: 0, failedCount: 0, paused: false };
@@ -104,8 +136,6 @@ function renderDialog(overrides: Partial<FilterBulkImportDialogProps> = {}) {
   const props: FilterBulkImportDialogProps = {
     open: true,
     categories,
-    filters,
-    filtersReady: true,
     onOpenChange: vi.fn(),
     onImported: vi.fn(),
     ...overrides,
@@ -142,6 +172,8 @@ async function attemptDialogClose(
 }
 
 beforeEach(() => {
+  setCatalog(filters, true);
+  useFilterCatalogMock.mockReturnValue(testCatalog);
   useBulkCreateFiltersMock.mockReturnValue(runnerState(vi.fn(async () => completedResult())));
 });
 
@@ -239,12 +271,11 @@ describe('FilterBulkImportDialog inspection lifecycle', () => {
     const onOpenChange = vi.fn();
     const onImported = vi.fn();
     const user = userEvent.setup();
+    setCatalog([], false);
     const { rerender } = render(
       <FilterBulkImportDialog
         open
         categories={categories}
-        filters={[]}
-        filtersReady={false}
         onOpenChange={onOpenChange}
         onImported={onImported}
       />,
@@ -256,12 +287,11 @@ describe('FilterBulkImportDialog inspection lifecycle', () => {
     await user.upload(input, ncpFile(fixture02, 'too-early.NCP'));
     expect(screen.queryByLabelText(rowLabel('too-early.NCP', '显示名称'))).not.toBeInTheDocument();
 
+    setCatalog(filters, true);
     rerender(
       <FilterBulkImportDialog
         open
         categories={categories}
-        filters={filters}
-        filtersReady
         onOpenChange={onOpenChange}
         onImported={onImported}
       />,
@@ -281,8 +311,6 @@ describe('FilterBulkImportDialog inspection lifecycle', () => {
       <FilterBulkImportDialog
         open
         categories={categories}
-        filters={filters}
-        filtersReady
         onOpenChange={onOpenChange}
         onImported={onImported}
       />,
@@ -294,12 +322,11 @@ describe('FilterBulkImportDialog inspection lifecycle', () => {
     );
     expect(await screen.findByLabelText(rowLabel('stable-sort.NCP', '排序'))).toHaveValue(21);
 
+    setCatalog([...filters, { ...filterFixture, id: 'new-filter', sortOrder: 41 }], true);
     rerender(
       <FilterBulkImportDialog
         open
         categories={categories}
-        filters={[...filters, { ...filterFixture, id: 'new-filter', sortOrder: 41 }]}
-        filtersReady
         onOpenChange={onOpenChange}
         onImported={onImported}
       />,
@@ -315,8 +342,6 @@ describe('FilterBulkImportDialog inspection lifecycle', () => {
     const baseProps: FilterBulkImportDialogProps = {
       open: true,
       categories,
-      filters,
-      filtersReady: true,
       onOpenChange,
       onImported,
     };
@@ -390,8 +415,6 @@ describe('FilterBulkImportDialog inspection lifecycle', () => {
       <FilterBulkImportDialog
         open
         categories={[]}
-        filters={filters}
-        filtersReady
         onOpenChange={onOpenChange}
         onImported={onImported}
       />,
@@ -402,8 +425,6 @@ describe('FilterBulkImportDialog inspection lifecycle', () => {
       <FilterBulkImportDialog
         open
         categories={categories}
-        filters={filters}
-        filtersReady
         onOpenChange={onOpenChange}
         onImported={onImported}
       />,
@@ -426,8 +447,6 @@ describe('FilterBulkImportDialog inspection lifecycle', () => {
       <FilterBulkImportDialog
         open
         categories={[]}
-        filters={filters}
-        filtersReady
         onOpenChange={onOpenChange}
         onImported={onImported}
       />,
@@ -443,8 +462,6 @@ describe('FilterBulkImportDialog inspection lifecycle', () => {
       <FilterBulkImportDialog
         open
         categories={categories}
-        filters={filters}
-        filtersReady
         onOpenChange={onOpenChange}
         onImported={onImported}
       />,
@@ -478,8 +495,6 @@ describe('FilterBulkImportDialog inspection lifecycle', () => {
       <FilterBulkImportDialog
         open
         categories={categories}
-        filters={filters}
-        filtersReady
         onOpenChange={onOpenChange}
         onImported={onImported}
       />,
@@ -500,8 +515,6 @@ describe('FilterBulkImportDialog inspection lifecycle', () => {
       <FilterBulkImportDialog
         open
         categories={[replacementCategory]}
-        filters={filters}
-        filtersReady
         onOpenChange={onOpenChange}
         onImported={onImported}
       />,
@@ -531,8 +544,6 @@ describe('FilterBulkImportDialog inspection lifecycle', () => {
       <FilterBulkImportDialog
         open
         categories={categories}
-        filters={filters}
-        filtersReady
         onOpenChange={onOpenChange}
         onImported={onImported}
       />,
@@ -551,8 +562,6 @@ describe('FilterBulkImportDialog inspection lifecycle', () => {
       <FilterBulkImportDialog
         open
         categories={[]}
-        filters={filters}
-        filtersReady
         onOpenChange={onOpenChange}
         onImported={onImported}
       />,
@@ -572,8 +581,6 @@ describe('FilterBulkImportDialog inspection lifecycle', () => {
       <FilterBulkImportDialog
         open
         categories={categories}
-        filters={filters}
-        filtersReady
         onOpenChange={onOpenChange}
         onImported={onImported}
       />,
@@ -600,8 +607,6 @@ describe('FilterBulkImportDialog inspection lifecycle', () => {
       <FilterBulkImportDialog
         open
         categories={categories}
-        filters={filters}
-        filtersReady
         onOpenChange={onOpenChange}
         onImported={onImported}
       />,
@@ -612,8 +617,6 @@ describe('FilterBulkImportDialog inspection lifecycle', () => {
       <FilterBulkImportDialog
         open
         categories={nextCategories}
-        filters={filters}
-        filtersReady
         onOpenChange={onOpenChange}
         onImported={onImported}
       />,
@@ -664,8 +667,6 @@ describe('FilterBulkImportDialog inspection lifecycle', () => {
           <FilterBulkImportDialog
             open={open}
             categories={categories}
-            filters={filters}
-            filtersReady
             onOpenChange={(next) => {
               onOpenChange(next);
               setOpen(next);
@@ -1203,8 +1204,6 @@ describe('FilterBulkImportDialog validation and import runs', () => {
       <FilterBulkImportDialog
         open
         categories={categories}
-        filters={filters}
-        filtersReady
         onOpenChange={onOpenChange}
         onImported={vi.fn()}
       />,

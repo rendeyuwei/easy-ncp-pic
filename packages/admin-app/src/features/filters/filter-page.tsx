@@ -146,7 +146,7 @@ export function FilterPage() {
   }
 
   return (
-    <section className="admin-page">
+    <section className="admin-page" aria-busy={filters.isFetching || categories.isFetching}>
       <header className="page-heading filter-heading">
         <div>
           <p className="eyebrow">内容管理</p>
@@ -172,8 +172,6 @@ export function FilterPage() {
       <FilterBulkImportDialog
         open={bulkOpen}
         categories={categories.data ?? []}
-        filters={filters.data ?? []}
-        filtersReady={filters.isSuccess && !filters.isFetching && !filters.isRefetchError}
         onOpenChange={setBulkOpen}
         onImported={(result) => {
           notify(

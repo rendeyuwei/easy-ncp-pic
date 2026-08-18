@@ -63,6 +63,19 @@ beforeEach(() => {
 });
 
 describe('filter page states', () => {
+  it('loads filters through the catalog after StrictMode replays provider effects', async () => {
+    let listRequests = 0;
+    server.use(http.get('/api/admin/filters', () => {
+      listRequests += 1;
+      return HttpResponse.json({ filters: [filterFixture] });
+    }));
+
+    renderAdminApp(new AdminApiClient(), '/admin/filters', true);
+
+    expect(await screen.findByRole('table', { name: '滤镜列表' })).toBeInTheDocument();
+    expect(listRequests).toBeGreaterThan(0);
+  });
+
   it('shows loading then preserves API order in equivalent desktop and mobile rows', async () => {
     const release = deferred<void>();
     const first = filter({
@@ -262,7 +275,7 @@ describe('local-first filter creation', () => {
       refetch = queryClient.invalidateQueries({ queryKey: queryKeys.filters });
     });
     await waitFor(() => expect(listRequests).toBe(2));
-    expect(picker).toBeDisabled();
+    await waitFor(() => expect(picker).toBeDisabled());
     await user.upload(picker, ncpFile(fixture02, 'blocked-during-refetch.NCP'));
     expect(within(dialog).queryByLabelText(bulkRowLabel('blocked-during-refetch.NCP', '排序')))
       .not.toBeInTheDocument();
@@ -283,6 +296,45 @@ describe('local-first filter creation', () => {
     await user.upload(picker, ncpFile(fixture02, 'fresh-selection.NCP'));
     expect(await within(dialog).findByLabelText(bulkRowLabel('fresh-selection.NCP', '排序')))
       .toHaveValue(42);
+  });
+
+  it('invalidates a held inspection in the same tick that a cached refetch starts', async () => {
+    const releaseRefetch = deferred<void>();
+    let listRequests = 0;
+    server.use(http.get('/api/admin/filters', async () => {
+      listRequests += 1;
+      if (listRequests === 1) {
+        return HttpResponse.json({ filters: [filter({ sortOrder: 20 })] });
+      }
+      await releaseRefetch.promise;
+      return HttpResponse.json({ filters: [filter({ sortOrder: 41 })] });
+    }));
+    const { queryClient, user } = renderFilters();
+
+    await screen.findByRole('table', { name: '滤镜列表' });
+    await user.click(screen.getByRole('button', { name: '批量导入' }));
+    const dialog = screen.getByRole('dialog', { name: '批量导入滤镜' });
+    const picker = within(dialog).getByLabelText('NCP 文件（可多选）');
+    const slowRead = deferred<ArrayBuffer>();
+    const slowFile = new File([fixture02], 'same-tick-inspection.NCP', { type: 'application/octet-stream' });
+    Object.defineProperty(slowFile, 'arrayBuffer', { value: () => slowRead.promise });
+    await user.upload(picker, slowFile);
+
+    let refetch!: Promise<void>;
+    act(() => {
+      refetch = queryClient.invalidateQueries({ queryKey: queryKeys.filters });
+      expect(picker).toBeEnabled();
+      slowRead.resolve(fixture02.slice().buffer);
+    });
+    await act(async () => {
+      await slowRead.promise;
+      await Promise.resolve();
+    });
+
+    releaseRefetch.resolve();
+    await act(async () => { await refetch; });
+    expect(within(dialog).queryByLabelText(bulkRowLabel('same-tick-inspection.NCP', '排序')))
+      .not.toBeInTheDocument();
   });
 
   it('keeps bulk file selection guarded after a filter-list error and recovers after retry', async () => {

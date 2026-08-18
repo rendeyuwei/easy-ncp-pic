@@ -12,12 +12,13 @@ export interface FilterCatalog {
   activate(): void;
   load(signal?: AbortSignal): Promise<AdminFilter[]>;
   capture(): FilterCatalogSnapshot | null;
-  reconcile(): Promise<AdminFilter[]>;
+  reconcile(signal: AbortSignal): Promise<AdminFilter[]>;
   dispose(): void;
 }
 
 interface ReconciliationOwner {
   readonly controller: AbortController;
+  readonly participants: Set<symbol>;
   readonly promise: Promise<AdminFilter[]>;
   resolve(filters: AdminFilter[]): void;
   reject(error: unknown): void;
@@ -56,7 +57,6 @@ export function createFilterCatalog(api: AdminApi, queryClient: QueryClient): Fi
       if (event.type === 'removed') invalidateOwner();
     });
   };
-  subscribe();
 
   const owns = (candidate: ReconciliationOwner): boolean => (
     !disposed && owner === candidate && !candidate.controller.signal.aborted
@@ -86,21 +86,59 @@ export function createFilterCatalog(api: AdminApi, queryClient: QueryClient): Fi
     }
   };
 
+  const participate = (
+    candidate: ReconciliationOwner,
+    signal: AbortSignal,
+  ): Promise<AdminFilter[]> => {
+    if (signal.aborted) return Promise.reject(cancelled());
+    const participant = Symbol('filter-catalog-reconciliation');
+    candidate.participants.add(participant);
+    return new Promise<AdminFilter[]>((resolve, reject) => {
+      let active = true;
+      const release = () => {
+        if (!active) return false;
+        active = false;
+        candidate.participants.delete(participant);
+        signal.removeEventListener('abort', onAbort);
+        return true;
+      };
+      const onAbort = () => {
+        if (!release()) return;
+        reject(cancelled());
+        if (owner === candidate && candidate.participants.size === 0) invalidateOwner();
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+      candidate.promise.then(
+        (filters) => {
+          if (!release()) return;
+          resolve(filters);
+        },
+        (error: unknown) => {
+          if (!release()) return;
+          reject(error);
+        },
+      );
+      if (signal.aborted) onAbort();
+    });
+  };
+
   return {
     activate() {
-      if (!disposed) return;
-      disposed = false;
-      epoch += 1;
+      if (disposed) {
+        disposed = false;
+        epoch += 1;
+      }
       subscribe();
     },
 
     load(signal) {
       if (disposed) return Promise.reject(cancelled());
+      subscribe();
       return owner?.promise ?? api.listFilters(signal);
     },
 
     capture() {
-      if (disposed || owner) return null;
+      if (disposed || !unsubscribe || owner) return null;
       const query = queryCache.find<AdminFilter[]>({ queryKey: queryKeys.filters, exact: true });
       if (!query
         || query.state.status !== 'success'
@@ -127,9 +165,11 @@ export function createFilterCatalog(api: AdminApi, queryClient: QueryClient): Fi
       };
     },
 
-    reconcile() {
+    reconcile(signal) {
       if (disposed) return Promise.reject(cancelled());
-      if (owner) return owner.promise;
+      if (signal.aborted) return Promise.reject(cancelled());
+      subscribe();
+      if (owner) return participate(owner, signal);
       const protectedQuery = queryCache.find({ queryKey: queryKeys.filters, exact: true });
       if (!protectedQuery) return Promise.reject(cancelled());
       let resolve!: (filters: AdminFilter[]) => void;
@@ -140,6 +180,7 @@ export function createFilterCatalog(api: AdminApi, queryClient: QueryClient): Fi
       });
       const candidate: ReconciliationOwner = {
         controller: new AbortController(),
+        participants: new Set(),
         promise,
         resolve,
         reject,
@@ -147,7 +188,7 @@ export function createFilterCatalog(api: AdminApi, queryClient: QueryClient): Fi
       owner = candidate;
       epoch += 1;
       void executeReconciliation(candidate);
-      return promise;
+      return participate(candidate, signal);
     },
 
     dispose() {

@@ -54,6 +54,7 @@ export function useBulkCreateFilters(): {
   const queryClient = useQueryClient();
   const activeRuns = useRef(0);
   const activeReconciliations = useRef(0);
+  const reconciliationControllers = useRef(new Set<AbortController>());
   const mounted = useRef(false);
   const [isPending, setIsPending] = useState(false);
   const [isReconciling, setIsReconciling] = useState(false);
@@ -62,6 +63,8 @@ export function useBulkCreateFilters(): {
     mounted.current = true;
     return () => {
       mounted.current = false;
+      for (const controller of reconciliationControllers.current) controller.abort();
+      reconciliationControllers.current.clear();
     };
   }, []);
 
@@ -110,11 +113,14 @@ export function useBulkCreateFilters(): {
   }, [api, queryClient]);
 
   const reconcile = useCallback(async (): Promise<AdminFilter[]> => {
+    const controller = new AbortController();
+    reconciliationControllers.current.add(controller);
     activeReconciliations.current += 1;
     setIsReconciling(true);
     try {
-      return await filterCatalog.reconcile();
+      return await filterCatalog.reconcile(controller.signal);
     } finally {
+      reconciliationControllers.current.delete(controller);
       activeReconciliations.current -= 1;
       if (mounted.current && activeReconciliations.current === 0) setIsReconciling(false);
     }

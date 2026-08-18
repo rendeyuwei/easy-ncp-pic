@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createElement, type PropsWithChildren } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, renderHook, waitFor } from '@testing-library/react';
+import { act, render, renderHook, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import {
   MAX_BULK_FILTER_FILES,
@@ -12,6 +12,7 @@ import {
   toFilterCreateInput,
   type BulkFilterRow,
 } from '../features/filters/filter-bulk-import';
+import { createFilterCatalog } from '../features/filters/filter-catalog';
 import { useBulkCreateFilters, useFilters } from '../features/filters/filter-queries';
 import { queryKeys } from '../features/query-keys';
 import { AdminApiClient, ApiFailure, type AdminApi, type FilterCreateInput } from '../lib/admin-client';
@@ -108,6 +109,38 @@ function renderFilterHooks(api: AdminApi, queryClient: QueryClient) {
   }
 
   return renderHook(() => ({ filters: useFilters(), bulk: useBulkCreateFilters() }), { wrapper: Wrapper });
+}
+
+function renderBulkCreateConsumer(api: AdminApi, queryClient: QueryClient) {
+  let current: ReturnType<typeof useBulkCreateFilters> | null = null;
+
+  function Consumer() {
+    current = useBulkCreateFilters();
+    return null;
+  }
+
+  function tree(showConsumer: boolean) {
+    return createElement(
+      QueryClientProvider,
+      { client: queryClient },
+      createElement(
+        SessionProvider,
+        { api, queryClient },
+        showConsumer ? createElement(Consumer) : null,
+      ),
+    );
+  }
+
+  const view = render(tree(true));
+  return {
+    current() {
+      if (!current) throw new Error('Expected the bulk-create consumer to render');
+      return current;
+    },
+    unmountConsumer() {
+      view.rerender(tree(false));
+    },
+  };
 }
 
 describe('inspectBulkFilterFiles', () => {
@@ -441,6 +474,46 @@ describe('runBulkFilterImport', () => {
   });
 });
 
+describe('FilterCatalog lifecycle', () => {
+  it('keeps construction inert and balances the committed catalog subscription lifecycle', () => {
+    const api = createApi(vi.fn(async () => filterFixture));
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const queryCache = queryClient.getQueryCache();
+    const subscribe = queryCache.subscribe.bind(queryCache);
+    let activeSubscriptions = 0;
+    vi.spyOn(queryCache, 'subscribe').mockImplementation((listener) => {
+      activeSubscriptions += 1;
+      const unsubscribe = subscribe(listener);
+      let active = true;
+      return () => {
+        if (!active) return;
+        active = false;
+        activeSubscriptions -= 1;
+        unsubscribe();
+      };
+    });
+
+    const abandoned = createFilterCatalog(api, queryClient);
+    const committed = createFilterCatalog(api, queryClient);
+    try {
+      expect(activeSubscriptions).toBe(0);
+
+      committed.activate();
+      expect(activeSubscriptions).toBe(1);
+      committed.dispose();
+      expect(activeSubscriptions).toBe(0);
+
+      committed.activate();
+      expect(activeSubscriptions).toBe(1);
+      committed.dispose();
+      expect(activeSubscriptions).toBe(0);
+    } finally {
+      committed.dispose();
+      abandoned.dispose();
+    }
+  });
+});
+
 describe('useBulkCreateFilters', () => {
   it('calls the API directly and invalidates filters exactly once after a successful run', async () => {
     const rows = await readyRows(2);
@@ -715,6 +788,97 @@ describe('useBulkCreateFilters', () => {
     held.resolve(authoritative);
     await settled;
     expect(queryClient.getQueryData(queryKeys.filters)).toEqual(cached);
+  });
+
+  it('cancels only the bulk consumer reconciliation when its page unmounts beneath the session provider', async () => {
+    const cached = [{ ...filterFixture, id: 'cached-filter' }];
+    const authoritative = [{ ...filterFixture, id: 'late-authoritative-filter' }];
+    const held = deferred<typeof authoritative>();
+    const started = deferred<void>();
+    let reconciliationSignal: AbortSignal | undefined;
+    const listFilters: AdminApi['listFilters'] = (signal) => {
+      reconciliationSignal = signal;
+      started.resolve();
+      return held.promise;
+    };
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    queryClient.setQueryData(queryKeys.filters, cached);
+    const view = renderBulkCreateConsumer(
+      createApi(vi.fn(async () => filterFixture), listFilters),
+      queryClient,
+    );
+
+    let reconciliation!: Promise<AdminFilter[]>;
+    act(() => { reconciliation = view.current().reconcile(); });
+    const settled = reconciliation.then(
+      (filters) => ({ status: 'fulfilled' as const, filters }),
+      (error: unknown) => ({
+        status: 'rejected' as const,
+        name: error instanceof Error ? error.name : 'unknown',
+      }),
+    );
+    await started.promise;
+    act(() => view.unmountConsumer());
+    const abortedAfterConsumerUnmount = reconciliationSignal?.aborted;
+
+    held.resolve(authoritative);
+    const outcome = await settled;
+
+    expect({
+      abortedAfterConsumerUnmount,
+      outcome,
+      cachedFilters: queryClient.getQueryData(queryKeys.filters),
+    }).toEqual({
+      abortedAfterConsumerUnmount: true,
+      outcome: { status: 'rejected', name: 'AbortError' },
+      cachedFilters: cached,
+    });
+  });
+
+  it('keeps a shared reconciliation alive until its final caller lease is cancelled', async () => {
+    const cached = [{ ...filterFixture, id: 'cached-filter' }];
+    const authoritative = [{ ...filterFixture, id: 'authoritative-filter' }];
+    const held = deferred<typeof authoritative>();
+    const started = deferred<void>();
+    let reconciliationSignal: AbortSignal | undefined;
+    const listFilters: AdminApi['listFilters'] = (signal) => {
+      reconciliationSignal = signal;
+      started.resolve();
+      return held.promise;
+    };
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    queryClient.setQueryData(queryKeys.filters, cached);
+    const catalog = createFilterCatalog(
+      createApi(vi.fn(async () => filterFixture), listFilters),
+      queryClient,
+    );
+    catalog.activate();
+    const departingCaller = new AbortController();
+    const remainingCaller = new AbortController();
+
+    try {
+      const departing = catalog.reconcile(departingCaller.signal).then(
+        (value) => ({ status: 'fulfilled' as const, value }),
+        (error: unknown) => ({
+          status: 'rejected' as const,
+          name: error instanceof Error ? error.name : 'unknown',
+        }),
+      );
+      const remaining = catalog.reconcile(remainingCaller.signal);
+      await started.promise;
+      departingCaller.abort();
+      await Promise.resolve();
+      const requestAbortedAfterOneDeparture = reconciliationSignal?.aborted;
+
+      held.resolve(authoritative);
+
+      await expect(departing).resolves.toEqual({ status: 'rejected', name: 'AbortError' });
+      await expect(remaining).resolves.toEqual(authoritative);
+      expect(requestAbortedAfterOneDeparture).toBe(false);
+      expect(queryClient.getQueryData(queryKeys.filters)).toEqual(authoritative);
+    } finally {
+      catalog.dispose();
+    }
   });
 
   it('does not repopulate filters removed while reconciliation is held', async () => {

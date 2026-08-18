@@ -512,6 +512,224 @@ describe('FilterCatalog lifecycle', () => {
       abandoned.dispose();
     }
   });
+
+  it('preserves a normal load when its reconciliation co-owner leaves', async () => {
+    const cached = [{ ...filterFixture, id: 'cached-filter' }];
+    const authoritative = [{ ...filterFixture, id: 'authoritative-filter' }];
+    const held = deferred<typeof authoritative>();
+    const started = deferred<void>();
+    let requestSignal: AbortSignal | undefined;
+    const requestCaches: Array<RequestCache | undefined> = [];
+    const listFilters: AdminApi['listFilters'] = (signal, cache) => {
+      requestSignal = signal;
+      requestCaches.push(cache);
+      started.resolve();
+      return held.promise;
+    };
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    queryClient.setQueryData(queryKeys.filters, cached);
+    const catalog = createFilterCatalog(
+      createApi(vi.fn(async () => filterFixture), listFilters),
+      queryClient,
+    );
+    catalog.activate();
+    const reconciliationCaller = new AbortController();
+    const loadCaller = new AbortController();
+    const addLoadListener = vi.spyOn(loadCaller.signal, 'addEventListener');
+    const removeLoadListener = vi.spyOn(loadCaller.signal, 'removeEventListener');
+
+    try {
+      const reconciliation = catalog.reconcile(reconciliationCaller.signal).then(
+        (filters) => ({ status: 'fulfilled' as const, filters }),
+        (error: unknown) => ({
+          status: 'rejected' as const,
+          name: error instanceof Error ? error.name : 'unknown',
+        }),
+      );
+      const load = catalog.load(loadCaller.signal);
+      await started.promise;
+
+      reconciliationCaller.abort();
+      await Promise.resolve();
+      const abortedAfterReconciliationDeparture = requestSignal?.aborted;
+      held.resolve(authoritative);
+
+      await expect(reconciliation).resolves.toEqual({ status: 'rejected', name: 'AbortError' });
+      await expect(load).resolves.toEqual(authoritative);
+      expect(abortedAfterReconciliationDeparture).toBe(false);
+      expect(requestCaches).toEqual(['no-store']);
+      expect(queryClient.getQueryData(queryKeys.filters)).toEqual(authoritative);
+      expect(addLoadListener).toHaveBeenCalledTimes(1);
+      expect(removeLoadListener).toHaveBeenCalledTimes(1);
+      expect(removeLoadListener.mock.calls[0]?.[1]).toBe(addLoadListener.mock.calls[0]?.[1]);
+    } finally {
+      catalog.dispose();
+    }
+  });
+
+  it('preserves reconciliation when its normal-load co-owner leaves', async () => {
+    const cached = [{ ...filterFixture, id: 'cached-filter' }];
+    const authoritative = [{ ...filterFixture, id: 'authoritative-filter' }];
+    const held = deferred<typeof authoritative>();
+    const started = deferred<void>();
+    let requestSignal: AbortSignal | undefined;
+    const listFilters: AdminApi['listFilters'] = (signal) => {
+      requestSignal = signal;
+      started.resolve();
+      return held.promise;
+    };
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    queryClient.setQueryData(queryKeys.filters, cached);
+    const catalog = createFilterCatalog(
+      createApi(vi.fn(async () => filterFixture), listFilters),
+      queryClient,
+    );
+    catalog.activate();
+    const reconciliationCaller = new AbortController();
+    const loadCaller = new AbortController();
+
+    try {
+      const reconciliation = catalog.reconcile(reconciliationCaller.signal);
+      const load = catalog.load(loadCaller.signal).then(
+        (filters) => ({ status: 'fulfilled' as const, filters }),
+        (error: unknown) => ({
+          status: 'rejected' as const,
+          name: error instanceof Error ? error.name : 'unknown',
+        }),
+      );
+      await started.promise;
+
+      loadCaller.abort();
+      await Promise.resolve();
+      const abortedAfterLoadDeparture = requestSignal?.aborted;
+      held.resolve(authoritative);
+
+      await expect(load).resolves.toEqual({ status: 'rejected', name: 'AbortError' });
+      await expect(reconciliation).resolves.toEqual(authoritative);
+      expect(abortedAfterLoadDeparture).toBe(false);
+      expect(queryClient.getQueryData(queryKeys.filters)).toEqual(authoritative);
+    } finally {
+      catalog.dispose();
+    }
+  });
+
+  it('aborts the authoritative request when a normal load is the final participant to leave', async () => {
+    const cached = [{ ...filterFixture, id: 'cached-filter' }];
+    const authoritative = [{ ...filterFixture, id: 'late-authoritative-filter' }];
+    const held = deferred<typeof authoritative>();
+    const started = deferred<void>();
+    let requestSignal: AbortSignal | undefined;
+    const listFilters: AdminApi['listFilters'] = (signal) => {
+      requestSignal = signal;
+      started.resolve();
+      return held.promise;
+    };
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    queryClient.setQueryData(queryKeys.filters, cached);
+    const catalog = createFilterCatalog(
+      createApi(vi.fn(async () => filterFixture), listFilters),
+      queryClient,
+    );
+    catalog.activate();
+    const reconciliationCaller = new AbortController();
+    const loadCaller = new AbortController();
+
+    try {
+      const reconciliation = catalog.reconcile(reconciliationCaller.signal).then(
+        (filters) => ({ status: 'fulfilled' as const, filters }),
+        (error: unknown) => ({
+          status: 'rejected' as const,
+          name: error instanceof Error ? error.name : 'unknown',
+        }),
+      );
+      const load = catalog.load(loadCaller.signal).then(
+        (filters) => ({ status: 'fulfilled' as const, filters }),
+        (error: unknown) => ({
+          status: 'rejected' as const,
+          name: error instanceof Error ? error.name : 'unknown',
+        }),
+      );
+      await started.promise;
+
+      reconciliationCaller.abort();
+      await Promise.resolve();
+      const abortedWithLoadRemaining = requestSignal?.aborted;
+      loadCaller.abort();
+      await Promise.resolve();
+      const abortedAfterFinalDeparture = requestSignal?.aborted;
+      held.resolve(authoritative);
+
+      await expect(reconciliation).resolves.toEqual({ status: 'rejected', name: 'AbortError' });
+      await expect(load).resolves.toEqual({ status: 'rejected', name: 'AbortError' });
+      expect(abortedWithLoadRemaining).toBe(false);
+      expect(abortedAfterFinalDeparture).toBe(true);
+      expect(queryClient.getQueryData(queryKeys.filters)).toEqual(cached);
+    } finally {
+      catalog.dispose();
+    }
+  });
+
+  it('rejects a pre-aborted normal load without retaining an owner participant', async () => {
+    const cached = [{ ...filterFixture, id: 'cached-filter' }];
+    const authoritative = [{ ...filterFixture, id: 'authoritative-filter' }];
+    const held = deferred<typeof authoritative>();
+    const started = deferred<void>();
+    let requestSignal: AbortSignal | undefined;
+    const listFilters: AdminApi['listFilters'] = (signal) => {
+      requestSignal = signal;
+      started.resolve();
+      return held.promise;
+    };
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    queryClient.setQueryData(queryKeys.filters, cached);
+    const catalog = createFilterCatalog(
+      createApi(vi.fn(async () => filterFixture), listFilters),
+      queryClient,
+    );
+    catalog.activate();
+    const reconciliationCaller = new AbortController();
+    const loadCaller = new AbortController();
+    loadCaller.abort();
+    const addLoadListener = vi.spyOn(loadCaller.signal, 'addEventListener');
+
+    try {
+      const reconciliation = catalog.reconcile(reconciliationCaller.signal).then(
+        (filters) => ({ status: 'fulfilled' as const, filters }),
+        (error: unknown) => ({
+          status: 'rejected' as const,
+          name: error instanceof Error ? error.name : 'unknown',
+        }),
+      );
+      let loadOutcome:
+        | { status: 'fulfilled'; filters: AdminFilter[] }
+        | { status: 'rejected'; name: string }
+        | undefined;
+      void catalog.load(loadCaller.signal).then(
+        (filters) => { loadOutcome = { status: 'fulfilled', filters }; },
+        (error: unknown) => {
+          loadOutcome = {
+            status: 'rejected',
+            name: error instanceof Error ? error.name : 'unknown',
+          };
+        },
+      );
+      await started.promise;
+
+      expect(loadOutcome).toEqual({ status: 'rejected', name: 'AbortError' });
+      expect(addLoadListener).not.toHaveBeenCalled();
+      expect(requestSignal?.aborted).toBe(false);
+
+      reconciliationCaller.abort();
+      await Promise.resolve();
+      expect(requestSignal?.aborted).toBe(true);
+
+      held.resolve(authoritative);
+      await expect(reconciliation).resolves.toEqual({ status: 'rejected', name: 'AbortError' });
+      expect(queryClient.getQueryData(queryKeys.filters)).toEqual(cached);
+    } finally {
+      catalog.dispose();
+    }
+  });
 });
 
 describe('useBulkCreateFilters', () => {

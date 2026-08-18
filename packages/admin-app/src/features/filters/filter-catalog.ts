@@ -88,10 +88,10 @@ export function createFilterCatalog(api: AdminApi, queryClient: QueryClient): Fi
 
   const participate = (
     candidate: ReconciliationOwner,
-    signal: AbortSignal,
+    signal?: AbortSignal,
   ): Promise<AdminFilter[]> => {
-    if (signal.aborted) return Promise.reject(cancelled());
-    const participant = Symbol('filter-catalog-reconciliation');
+    if (signal?.aborted) return Promise.reject(cancelled());
+    const participant = Symbol('filter-catalog-participant');
     candidate.participants.add(participant);
     return new Promise<AdminFilter[]>((resolve, reject) => {
       let active = true;
@@ -99,7 +99,7 @@ export function createFilterCatalog(api: AdminApi, queryClient: QueryClient): Fi
         if (!active) return false;
         active = false;
         candidate.participants.delete(participant);
-        signal.removeEventListener('abort', onAbort);
+        signal?.removeEventListener('abort', onAbort);
         return true;
       };
       const onAbort = () => {
@@ -107,7 +107,7 @@ export function createFilterCatalog(api: AdminApi, queryClient: QueryClient): Fi
         reject(cancelled());
         if (owner === candidate && candidate.participants.size === 0) invalidateOwner();
       };
-      signal.addEventListener('abort', onAbort, { once: true });
+      signal?.addEventListener('abort', onAbort, { once: true });
       candidate.promise.then(
         (filters) => {
           if (!release()) return;
@@ -118,7 +118,7 @@ export function createFilterCatalog(api: AdminApi, queryClient: QueryClient): Fi
           reject(error);
         },
       );
-      if (signal.aborted) onAbort();
+      if (signal?.aborted) onAbort();
     });
   };
 
@@ -134,7 +134,7 @@ export function createFilterCatalog(api: AdminApi, queryClient: QueryClient): Fi
     load(signal) {
       if (disposed) return Promise.reject(cancelled());
       subscribe();
-      return owner?.promise ?? api.listFilters(signal);
+      return owner ? participate(owner, signal) : api.listFilters(signal);
     },
 
     capture() {

@@ -18,10 +18,15 @@ import {
   inspectNcpFile,
   type NcpInspection,
 } from '../../lib/ncp-inspector';
+import {
+  filterClientErrors,
+  mapFilterCreateError,
+  ncpInspectionMessage,
+  type FilterFieldErrors,
+} from './filter-form';
 import { NcpPreview } from './ncp-preview';
 
-type FieldName = 'displayName' | 'categoryId' | 'description' | 'slug' | 'sortOrder' | 'isEnabled';
-type FieldErrors = Partial<Record<FieldName, string>>;
+type FieldErrors = FilterFieldErrors;
 
 interface FilterCreateDialogProps {
   open: boolean;
@@ -29,66 +34,6 @@ interface FilterCreateDialogProps {
   mutation: UseMutationResult<AdminFilter, Error, FilterCreateInput>;
   onOpenChange(open: boolean): void;
   onSuccess(): void;
-}
-
-const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-
-function clientErrors(
-  displayName: string,
-  categoryId: string,
-  description: string,
-  slug: string,
-  sortOrder: string,
-): FieldErrors {
-  const errors: FieldErrors = {};
-  const cleanName = displayName.trim();
-  const cleanDescription = description.trim();
-  const cleanSlug = slug.trim();
-  const numericOrder = Number(sortOrder);
-  if (!cleanName) errors.displayName = '请输入显示名称';
-  else if (Array.from(cleanName).length > 100) errors.displayName = '显示名称不能超过 100 个字符';
-  if (!categoryId) errors.categoryId = '请选择分类';
-  if (Array.from(cleanDescription).length > 500) errors.description = '描述不能超过 500 个字符';
-  if (Array.from(cleanSlug).length > 60) errors.slug = 'Slug 不能超过 60 个字符';
-  else if (cleanSlug && !SLUG_PATTERN.test(cleanSlug)) errors.slug = 'Slug 只能包含小写字母、数字和单个连字符';
-  if (!sortOrder.trim() || !Number.isInteger(numericOrder)) errors.sortOrder = '排序必须是整数';
-  return errors;
-}
-
-function apiErrors(error: unknown): { fields: FieldErrors; summary: string | null } {
-  if (!(error instanceof ApiFailure)) return { fields: {}, summary: '保存失败，请重试' };
-  if (error.code === 'DUPLICATE_NCP') return { fields: {}, summary: '该 NCP 已经发布，请选择其他文件' };
-  if (error.code === 'SLUG_CONFLICT') return { fields: { slug: '该 Slug 已被使用，请选择其他 Slug' }, summary: null };
-  if (error.code === 'PAYLOAD_TOO_LARGE') return { fields: {}, summary: '完整上传请求超过 64 KiB；当前支持的 NCP 文件应为 638 字节' };
-  if (error.code === 'INVALID_NCP') return { fields: {}, summary: '服务器判定该文件不是有效的受支持 NCP' };
-  if (error.code === 'UNSUPPORTED_NCP') return { fields: {}, summary: '服务器判定当前不支持发布此 NCP' };
-  if (error.code === 'RATE_LIMITED') return { fields: {}, summary: '请求过于频繁，请稍后重试' };
-  if (error.code !== 'VALIDATION_ERROR') return { fields: {}, summary: '保存失败，请重试' };
-
-  const fields: FieldErrors = {};
-  let hasUnmatched = false;
-  for (const entry of error.errors ?? []) {
-    if (['displayName', 'categoryId', 'description', 'slug', 'sortOrder', 'isEnabled'].includes(entry.field)) {
-      fields[entry.field as FieldName] = entry.message;
-    } else {
-      hasUnmatched = true;
-    }
-  }
-  return {
-    fields,
-    summary: hasUnmatched
-      ? '输入内容有误，请检查后重试'
-      : Object.keys(fields).length ? null : '输入内容有误，请检查后重试',
-  };
-}
-
-function inspectionMessage(error: NcpInspectionError): string {
-  switch (error.code) {
-    case 'EMPTY_FILE': return '请选择一个非空的 NCP 文件';
-    case 'FILE_TOO_LARGE': return 'NCP 文件不能超过 64 KiB';
-    case 'UNSUPPORTED_NCP': return '当前不支持发布此 NCP';
-    case 'INVALID_NCP': return 'NCP 文件已损坏或格式无效';
-  }
 }
 
 export function FilterCreateDialog({
@@ -157,7 +102,7 @@ export function FilterCreateDialog({
       if (inspectionGeneration.current !== generation) return;
       setInspection(null);
       setFileError(error instanceof NcpInspectionError
-        ? inspectionMessage(error)
+        ? ncpInspectionMessage(error)
         : '无法读取 NCP 文件，请重试');
     }
   };
@@ -171,7 +116,7 @@ export function FilterCreateDialog({
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (!inspection || mutation.isPending) return;
-    const nextErrors = clientErrors(displayName, categoryId, description, slug, sortOrder);
+    const nextErrors = filterClientErrors({ displayName, categoryId, description, slug, sortOrder });
     setErrors(nextErrors);
     setSummary(null);
     if (Object.keys(nextErrors).length) return;
@@ -190,9 +135,11 @@ export function FilterCreateDialog({
       clear();
       onSuccess();
     } catch (error) {
-      const mapped = apiErrors(error);
+      const mapped = mapFilterCreateError(error);
       setErrors(mapped.fields);
-      setSummary(mapped.summary);
+      setSummary(error instanceof ApiFailure && (error.status === 0 || error.code === 'NETWORK_ERROR')
+        ? '保存失败，请重试'
+        : mapped.summary);
     }
   };
 

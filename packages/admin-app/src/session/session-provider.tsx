@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { QueryClient } from '@tanstack/react-query';
 import { ApiFailure, type AdminApi, type Credentials } from '../lib/admin-client';
 import { queryKeys } from '../features/query-keys';
+import { createFilterCatalog, type FilterCatalog } from '../features/filters/filter-catalog';
 
 export type SessionStatus = 'loading' | 'authenticated' | 'anonymous' | 'transitioning';
 
@@ -10,6 +11,7 @@ interface SessionContextValue {
   bootstrapError: string | null;
   expiryNotice: string | null;
   api: AdminApi;
+  filterCatalog: FilterCatalog;
   retryBootstrap(): Promise<void>;
   login(input: Credentials): Promise<void>;
   logout(): Promise<void>;
@@ -30,6 +32,12 @@ export function SessionProvider({ api, queryClient, children }: SessionProviderP
   const generation = useRef(0);
   const authTransition = useRef(0);
   const hasAuthenticatedSession = useRef(false);
+  const filterCatalog = useMemo(() => createFilterCatalog(api, queryClient), [api, queryClient]);
+
+  useEffect(() => {
+    filterCatalog.activate();
+    return () => filterCatalog.dispose();
+  }, [filterCatalog]);
 
   const isCurrent = useCallback((operationGeneration: number) => (
     mounted.current && generation.current === operationGeneration
@@ -144,10 +152,11 @@ export function SessionProvider({ api, queryClient, children }: SessionProviderP
     bootstrapError,
     expiryNotice,
     api,
+    filterCatalog,
     retryBootstrap,
     login,
     logout,
-  }), [api, bootstrapError, expiryNotice, login, logout, retryBootstrap, status]);
+  }), [api, bootstrapError, expiryNotice, filterCatalog, login, logout, retryBootstrap, status]);
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
 }
 
@@ -155,4 +164,8 @@ export function useSession(): SessionContextValue {
   const session = useContext(SessionContext);
   if (!session) throw new Error('useSession must be used within SessionProvider');
   return session;
+}
+
+export function useFilterCatalog(): FilterCatalog {
+  return useSession().filterCatalog;
 }

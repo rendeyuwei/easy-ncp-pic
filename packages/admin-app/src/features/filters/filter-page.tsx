@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Pencil, Plus, Trash2 } from 'lucide-react';
+import { Files, Pencil, Plus, Trash2 } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import {
   Dialog,
@@ -14,6 +14,7 @@ import { useNotifications } from '../../components/notification-provider';
 import { ApiFailure } from '../../lib/admin-client';
 import type { AdminFilter } from '../../lib/api-schema';
 import { useCategories } from '../categories/category-queries';
+import { FilterBulkImportDialog } from './filter-bulk-import-dialog';
 import { FilterCreateDialog } from './filter-create-dialog';
 import { FilterEditDialog } from './filter-edit-dialog';
 import { useCreateFilter, useDeleteFilter, useFilters, useUpdateFilter } from './filter-queries';
@@ -47,6 +48,7 @@ export function FilterPage() {
   const update = useUpdateFilter();
   const remove = useDeleteFilter();
   const { notify } = useNotifications();
+  const [bulkOpen, setBulkOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<AdminFilter | null>(null);
   const [filterToDelete, setFilterToDelete] = useState<AdminFilter | null>(null);
@@ -55,10 +57,13 @@ export function FilterPage() {
   const createAvailabilityId = 'filter-create-availability';
   const createUnavailable = !categories.isSuccess;
   const createAvailability = categories.isPending
-    ? '正在加载分类，暂时无法新增滤镜。'
-    : categories.isError ? '分类加载失败，请重试后新增滤镜。' : null;
+    ? '正在加载分类，分类相关操作暂不可用。'
+    : categories.isError ? '分类加载失败，请重试后再进行分类相关操作。' : null;
   const openCreate = () => {
     if (categories.isSuccess) setCreateOpen(true);
+  };
+  const openBulk = () => {
+    if (categories.isSuccess) setBulkOpen(true);
   };
   const categoryNames = useMemo(
     () => new Map((categories.data ?? []).map((category) => [category.id, category.name])),
@@ -141,7 +146,7 @@ export function FilterPage() {
   }
 
   return (
-    <section className="admin-page">
+    <section className="admin-page" aria-busy={filters.isFetching || categories.isFetching}>
       <header className="page-heading filter-heading">
         <div>
           <p className="eyebrow">内容管理</p>
@@ -149,13 +154,36 @@ export function FilterPage() {
           <p className="page-heading__copy">检查并发布 NCP，管理展示顺序与状态。</p>
           {createAvailability ? <p id={createAvailabilityId} className="create-availability">{createAvailability}</p> : null}
         </div>
-        <Button
-          disabled={createUnavailable}
-          aria-describedby={createAvailability ? createAvailabilityId : undefined}
-          onClick={openCreate}
-        ><Plus aria-hidden="true" />新增滤镜</Button>
+        <div className="page-heading__actions">
+          <Button
+            variant="secondary"
+            disabled={createUnavailable}
+            aria-describedby={createAvailability ? createAvailabilityId : undefined}
+            onClick={openBulk}
+          ><Files aria-hidden="true" />批量导入</Button>
+          <Button
+            disabled={createUnavailable}
+            aria-describedby={createAvailability ? createAvailabilityId : undefined}
+            onClick={openCreate}
+          ><Plus aria-hidden="true" />新增滤镜</Button>
+        </div>
       </header>
       {content}
+      <FilterBulkImportDialog
+        open={bulkOpen}
+        categories={categories.data ?? []}
+        onOpenChange={setBulkOpen}
+        onImported={(result) => {
+          notify(
+            result.paused
+              ? `导入已暂停，已导入 ${result.createdCount} 个滤镜，请检查未完成项`
+              : `已导入 ${result.createdCount} 个滤镜，${result.failedCount} 个需要处理`,
+            result.paused
+              ? 'info'
+              : result.createdCount === 0 && result.failedCount > 0 ? 'failure' : 'success',
+          );
+        }}
+      />
       <FilterCreateDialog
         open={createOpen}
         categories={categories.data ?? []}

@@ -14,6 +14,7 @@ vi.mock('../lib/pixels', () => ({ drawPixelBuffer: vi.fn() }));
 
 const categories = parsePublicFilters(publicFiltersFixture).categories;
 const selectedFilter = categories[0].filters[0];
+const pendingFilter = { ...selectedFilter, id: 'pending-filter', displayName: 'Pending Filter' };
 const pixels: PixelBuffer = { width: 4, height: 3, data: new Float32Array(48) };
 const image: WorkerLoadedImage = {
   id: 'image-1',
@@ -28,6 +29,7 @@ function session(overrides: Partial<ImageSessionState> = {}): ImageSessionState 
     image,
     fileName: 'portrait.jpg',
     selectedFilter,
+    pendingFilter: null,
     intensity: 1,
     originalPreview: pixels,
     filteredPreview: pixels,
@@ -36,6 +38,9 @@ function session(overrides: Partial<ImageSessionState> = {}): ImageSessionState 
     progress: 0,
     progressStage: null,
     busy: false,
+    loading: false,
+    previewing: false,
+    exporting: false,
     error: null,
     fallbackNotice: null,
     load: vi.fn().mockResolvedValue(undefined),
@@ -43,6 +48,7 @@ function session(overrides: Partial<ImageSessionState> = {}): ImageSessionState 
     setIntensity: vi.fn(),
     exportImage: vi.fn().mockResolvedValue(new Uint8Array([1])),
     reset: vi.fn().mockResolvedValue(undefined),
+    requestThumbnails: vi.fn(),
     ...overrides,
   };
 }
@@ -87,19 +93,68 @@ describe('App editor integration', () => {
     expect(state.setIntensity).toHaveBeenCalledWith(0.99);
   });
 
+  it('keeps committed pixels named while announcing and requesting pending filter work', () => {
+    const state = session({ pendingFilter });
+    vi.mocked(useImageSession).mockReturnValue(state);
+
+    render(<App />);
+
+    expect(screen.getByRole('heading', { name: 'Fuji Astia' })).toBeInTheDocument();
+    expect(screen.getByText('正在应用 Pending Filter…')).toBeInTheDocument();
+    expect(state.requestThumbnails).toHaveBeenCalledWith(categories[0].filters);
+  });
+
+  it('keeps strength interactive for a pending first filter while export stays guarded', async () => {
+    const user = userEvent.setup();
+    const state = session({
+      selectedFilter: null,
+      pendingFilter,
+      intensity: 0.4,
+      busy: true,
+      previewing: true,
+    });
+    vi.mocked(useImageSession).mockReturnValue(state);
+
+    render(<App />);
+
+    expect(screen.getByText('40%')).toBeInTheDocument();
+    const intensity = screen.getByRole('slider', { name: '滤镜强度' });
+    intensity.focus();
+    await user.keyboard('{ArrowLeft}');
+    expect(state.setIntensity).toHaveBeenCalledWith(0.39);
+    expect(screen.getByRole('button', { name: '导出' })).toBeDisabled();
+  });
+
+  it.each([
+    ['load', { loading: true }],
+    ['export', { exporting: true }],
+  ] as const)('disables strength during %s work', async (_operation, operationState) => {
+    const user = userEvent.setup();
+    const state = session({ busy: true, ...operationState });
+    vi.mocked(useImageSession).mockReturnValue(state);
+
+    render(<App />);
+
+    const intensity = screen.getByRole('slider', { name: '滤镜强度' });
+    intensity.focus();
+    await user.keyboard('{ArrowLeft}');
+    expect(state.setIntensity).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: '导出' })).toBeDisabled();
+  });
+
   it('shows the original only while the compare control is held', () => {
     render(<App />);
     const compare = screen.getByRole('button', { name: '按住看原图' });
 
     fireEvent.pointerDown(compare);
-    expect(screen.getByTestId('filtered-layer')).toHaveStyle({ clipPath: 'inset(0 100% 0 0)' });
+    expect(screen.getByTestId('filtered-layer')).toHaveStyle({ clipPath: 'inset(0 0 0 100%)' });
     fireEvent.pointerUp(compare);
-    expect(screen.getByTestId('filtered-layer')).toHaveStyle({ clipPath: 'inset(0 50% 0 0)' });
+    expect(screen.getByTestId('filtered-layer')).toHaveStyle({ clipPath: 'inset(0 0 0 50%)' });
 
     fireEvent.keyDown(compare, { key: ' ' });
-    expect(screen.getByTestId('filtered-layer')).toHaveStyle({ clipPath: 'inset(0 100% 0 0)' });
+    expect(screen.getByTestId('filtered-layer')).toHaveStyle({ clipPath: 'inset(0 0 0 100%)' });
     fireEvent.keyUp(compare, { key: ' ' });
-    expect(screen.getByTestId('filtered-layer')).toHaveStyle({ clipPath: 'inset(0 50% 0 0)' });
+    expect(screen.getByTestId('filtered-layer')).toHaveStyle({ clipPath: 'inset(0 0 0 50%)' });
   });
 
   it('opens export and confirms replacing the current photo', async () => {

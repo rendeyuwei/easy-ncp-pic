@@ -630,6 +630,10 @@ input:focus-visible,
   background: color-mix(in srgb, var(--surface) 93%, var(--accent) 7%);
 }
 
+.filter-card[aria-busy='true'] {
+  border-color: var(--accent);
+}
+
 .filter-card__thumbnail,
 .filter-card__placeholder {
   display: grid;
@@ -655,7 +659,13 @@ input:focus-visible,
   white-space: nowrap;
 }
 
-.filter-card__copy > span {
+.filter-card__pending {
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.filter-card__copy > span:not(.filter-card__pending) {
   display: -webkit-box;
   overflow: hidden;
   color: var(--text-muted);

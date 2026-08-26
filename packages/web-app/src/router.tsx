@@ -1,5 +1,12 @@
-import { createRootRoute, createRoute, createRouter, Outlet } from '@tanstack/react-router';
+import {
+  createRootRoute,
+  createRoute,
+  createRouter,
+  Outlet,
+  type RouterHistory,
+} from '@tanstack/react-router';
 import { App } from './app';
+import { webBasepath } from './lib/deployment-paths';
 
 const rootRoute = createRootRoute({
   component: Outlet,
@@ -13,7 +20,11 @@ const indexRoute = createRoute({
 
 const routeTree = rootRoute.addChildren([indexRoute]);
 
-export const router = createRouter({ routeTree });
+export function createWebRouter(history?: RouterHistory, basepath = webBasepath()) {
+  return createRouter({ routeTree, basepath, history });
+}
+
+export const router = createWebRouter();
 
 declare module '@tanstack/react-router' {
   interface Register {

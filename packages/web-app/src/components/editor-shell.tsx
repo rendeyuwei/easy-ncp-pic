@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Moon, Sun } from 'lucide-react';
 import type { ImageSessionState } from '../hooks/use-image-session';
 import type { Theme } from '../hooks/use-theme';
+import { webPath } from '../lib/deployment-paths';
 import type { PublicCategory } from '../lib/filters';
 import { EditorControls } from './editor-controls';
 import { ExportDialog } from './export-dialog';
@@ -42,7 +43,7 @@ export function EditorShell({
   return (
     <div className="app-shell">
       <header className="app-header">
-        <a className="wordmark" href="/" aria-label="EasyPic 首页">
+        <a className="wordmark" href={webPath('')} aria-label="EasyPic 首页">
           <span aria-hidden="true">EP</span>EasyPic
         </a>
         <div className="header-actions">

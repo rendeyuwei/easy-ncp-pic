@@ -6,7 +6,7 @@
 
 EasyPic 是一个专注于 Nikon Picture Control（`.ncp`）滤镜的浏览器照片工具。这里的每一种已发布风格都来自真实的 NCP 数据，而不是随意拼出的通用滤镜预设。打开一张 JPG 或 PNG，探索独特的 NCP 质感、对比每处细节、调节滤镜强度，再以原始像素尺寸导出——整个过程无需把照片交给远端修图服务。
 
-> 想看看这张照片还能呈现怎样的感觉？[在本地运行 EasyPic](#本地体验)，几分钟后就能开始探索。
+> 想看看这张照片还能呈现怎样的感觉？可以[在线体验 EasyPic](https://rende.fun/easypic/)，也可以[在本地运行](#本地体验)，几分钟后就能开始探索。
 
 ## 为什么选择 EasyPic？
 
@@ -50,6 +50,25 @@ pnpm dev
 | 公开编辑器 | <http://127.0.0.1:5173/> | 打开照片并探索滤镜 |
 | 管理后台 | <http://127.0.0.1:5174/admin/> | 管理分类与已发布滤镜 |
 | API 健康检查 | <http://127.0.0.1:3000/api/health> | 确认 API 与数据库已就绪 |
+
+## 生产部署
+
+线上版本位于 <https://rende.fun/easypic/>。EasyPic 部署在 `/easypic/` 子路径下，因此域名根路径仍可留给独立首页。
+
+构建 Vite 应用时需要设置部署前缀：
+
+```bash
+EASYPIC_DEPLOY_PREFIX=easypic pnpm -r build
+```
+
+API 会话 Cookie 需要使用相同路径，并在生产环境中限制为仅 HTTPS：
+
+```dotenv
+EASYPIC_COOKIE_PATH=/easypic/
+EASYPIC_COOKIE_SECURE=true
+```
+
+[`deploy/`](deploy/) 目录包含当前线上部署使用的 Ubuntu ECS 运行时安装脚本、版本安装脚本、Nginx 配置、PM2 启动脚本、SQLite 每日备份单元和 Let's Encrypt 续期钩子。Nginx 将公开应用挂载到 `/easypic/`、管理后台挂载到 `/easypic/admin/`、API 挂载到 `/easypic/api/`，不会占用 `/`。
 
 ## 工作原理
 

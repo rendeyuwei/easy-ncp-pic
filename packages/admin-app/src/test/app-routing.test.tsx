@@ -55,6 +55,18 @@ function controllableApi(overrides: Partial<AdminApi> = {}) {
 }
 
 describe('admin application routing', () => {
+  it('routes below a custom deployment prefix', async () => {
+    const { history } = renderAdminApp(
+      createApi(),
+      '/easypic/admin',
+      false,
+      '/easypic/admin',
+    );
+
+    expect(await screen.findByRole('heading', { name: '滤镜' })).toBeInTheDocument();
+    expect(history.location.pathname).toBe('/easypic/admin/filters');
+  });
+
   it('redirects /admin to login for an anonymous session', async () => {
     const { history } = renderAdminApp(anonymousApi(), '/admin');
 

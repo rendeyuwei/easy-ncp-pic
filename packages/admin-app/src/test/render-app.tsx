@@ -16,7 +16,12 @@ interface RenderAdminAppResult extends RenderResult {
   user: UserEvent;
 }
 
-export function renderAdminApp(api: AdminApi, initialUrl: string, strictMode = false): RenderAdminAppResult {
+export function renderAdminApp(
+  api: AdminApi,
+  initialUrl: string,
+  strictMode = false,
+  basepath?: string,
+): RenderAdminAppResult {
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: { retry: false },
@@ -24,7 +29,7 @@ export function renderAdminApp(api: AdminApi, initialUrl: string, strictMode = f
     },
   });
   const history = createMemoryHistory({ initialEntries: [initialUrl] });
-  const router = createAdminRouter(history);
+  const router = createAdminRouter(history, basepath);
   const user = userEvent.setup();
 
   const app = (

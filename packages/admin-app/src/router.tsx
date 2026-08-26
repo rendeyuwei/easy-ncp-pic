@@ -13,6 +13,7 @@ import { PageState } from './components/ui/status';
 import { CategoryPage } from './features/categories/category-page';
 import { FilterPage } from './features/filters/filter-page';
 import { useSession } from './session/session-provider';
+import { adminBasepath } from './lib/deployment-paths';
 
 function RootLayout() {
   return <AppBoundary><Outlet /></AppBoundary>;
@@ -54,8 +55,8 @@ const routeTree = rootRoute.addChildren([
   protectedRoute.addChildren([filtersRoute, categoriesRoute]),
 ]);
 
-export function createAdminRouter(history?: RouterHistory) {
-  return createRouter({ routeTree, basepath: '/admin', history });
+export function createAdminRouter(history?: RouterHistory, basepath = adminBasepath()) {
+  return createRouter({ routeTree, basepath, history });
 }
 
 export type AdminRouter = ReturnType<typeof createAdminRouter>;

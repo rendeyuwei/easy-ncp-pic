@@ -21,6 +21,25 @@ describe('POST /api/admin/session (login)', () => {
     expect(res.headers['cache-control']).toBe('no-store');
   });
 
+  it('scopes the session cookie to the configured deployment prefix', async () => {
+    t = await buildTestApp(testConfig({ cookiePath: '/easypic/' }));
+    const loginResponse = await t.app.inject({
+      method: 'POST',
+      url: '/api/admin/session',
+      payload: { username: 'admin', password: TEST_PASSWORD },
+    });
+    const cookie = String(loginResponse.headers['set-cookie']);
+    expect(cookie).toContain('Path=/easypic/');
+
+    const { csrfToken } = loginResponse.json() as { csrfToken: string };
+    const logoutResponse = await t.app.inject({
+      method: 'DELETE',
+      url: '/api/admin/session',
+      headers: { cookie: cookie.split(';')[0], 'x-csrf-token': csrfToken },
+    });
+    expect(String(logoutResponse.headers['set-cookie'])).toContain('Path=/easypic/');
+  });
+
   it('rejects wrong password with 401 INVALID_CREDENTIALS and no cookie', async () => {
     t = await buildTestApp();
     const res = await t.app.inject({ method: 'POST', url: '/api/admin/session', payload: { username: 'admin', password: 'nope' } });

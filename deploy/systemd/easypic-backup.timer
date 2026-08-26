@@ -1,0 +1,10 @@
+[Unit]
+Description=Back up the EasyPic SQLite database daily
+
+[Timer]
+OnCalendar=*-*-* 03:20:00
+Persistent=true
+RandomizedDelaySec=15m
+
+[Install]
+WantedBy=timers.target

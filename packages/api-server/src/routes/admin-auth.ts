@@ -51,7 +51,7 @@ export function registerAdminAuthRoutes(app: FastifyInstance, ctx: AppContext, h
       }
       const created = ctx.sessions.create(admin.id);
       reply.setCookie(SESSION_COOKIE, created.token, {
-        path: '/',
+        path: ctx.config.cookiePath,
         httpOnly: true,
         secure: ctx.config.cookieSecure,
         sameSite: 'lax',
@@ -76,7 +76,7 @@ export function registerAdminAuthRoutes(app: FastifyInstance, ctx: AppContext, h
     { preHandler: [hooks.requireAuth, hooks.requireCsrf] },
     async (req, reply) => {
       ctx.sessions.revoke(req.session!.id);
-      reply.clearCookie(SESSION_COOKIE, { path: '/' });
+      reply.clearCookie(SESSION_COOKIE, { path: ctx.config.cookiePath });
       return reply.code(204).send();
     },
   );

@@ -9,6 +9,7 @@ import {
   type AdminFilter,
   type ApiErrorBody,
 } from './api-schema';
+import { adminApiPath } from './deployment-paths';
 
 export interface Credentials {
   username: string;
@@ -207,7 +208,7 @@ export class AdminApiClient implements AdminApi {
     headers.set('Accept', 'application/json');
 
     try {
-      return await this.fetchImpl.call(globalThis, path, {
+      return await this.fetchImpl.call(globalThis, adminApiPath(path), {
         ...init,
         credentials: 'same-origin',
         headers,

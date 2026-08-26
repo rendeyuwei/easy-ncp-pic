@@ -1,0 +1,6 @@
+[Unit]
+Description=Create a consistent EasyPic SQLite backup
+
+[Service]
+Type=oneshot
+ExecStart=/opt/easypic/current/deploy/backup-database.sh

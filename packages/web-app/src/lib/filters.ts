@@ -1,4 +1,5 @@
 import { fromParsedPictureControl, type FilterParams } from '@easypic/image-engine';
+import { webPath } from './deployment-paths';
 
 interface EnumValue {
   readonly code: number;
@@ -158,7 +159,7 @@ export function toFilterParams(filter: PublicFilter): FilterParams {
 }
 
 export async function fetchPublicFilters(signal?: AbortSignal): Promise<PublicFiltersResponse> {
-  const response = await fetch('/api/filters', { signal });
+  const response = await fetch(webPath('api/filters'), { signal });
   if (!response.ok) throw new Error(`Unable to load filters (${response.status})`);
   return parsePublicFilters(await response.json());
 }

@@ -5,6 +5,7 @@ export interface AppConfig {
   sessionSecret: string;
   sessionTtlHours: number;
   cookieSecure: boolean;
+  cookiePath: string;
   adminUsername: string;
   adminPassword: string;
   argon2: { memoryCost: number; timeCost: number; parallelism: number };
@@ -27,6 +28,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     sessionSecret,
     sessionTtlHours: Number(env.EASYPIC_SESSION_TTL_HOURS ?? 12),
     cookieSecure: env.EASYPIC_COOKIE_SECURE !== undefined ? env.EASYPIC_COOKIE_SECURE === 'true' : isProd,
+    cookiePath: env.EASYPIC_COOKIE_PATH ?? '/',
     adminUsername: env.EASYPIC_ADMIN_USERNAME ?? 'admin',
     adminPassword: env.EASYPIC_ADMIN_PASSWORD ?? '',
     argon2: {

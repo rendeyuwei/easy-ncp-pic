@@ -6,7 +6,7 @@
 
 EasyPic is a browser-based photo tool built specifically around Nikon Picture Control (`.ncp`) filters. Every published look is derived from real NCP data—not a grab bag of generic presets. Open a JPG or PNG, explore distinctive NCP looks, compare every detail, tune the intensity, and export at the original dimensions—all without handing your photo to a remote editor.
 
-> Ready to see what your photo could become? [Run EasyPic locally](#try-it-locally) and start exploring in a few minutes.
+> Ready to see what your photo could become? [Try EasyPic online](https://rende.fun/easypic/) or [run it locally](#try-it-locally) and start exploring in a few minutes.
 
 ## Why EasyPic?
 
@@ -50,6 +50,25 @@ The launcher builds the internal libraries and starts the API, public editor, an
 | Public editor | <http://127.0.0.1:5173/> | Open a photo and explore filters |
 | Administration | <http://127.0.0.1:5174/admin/> | Manage categories and published filters |
 | API health | <http://127.0.0.1:3000/api/health> | Confirm the API and database are ready |
+
+## Production Deployment
+
+The public deployment is available at <https://rende.fun/easypic/>. EasyPic is hosted below `/easypic/` so the domain root remains available for a separate home page.
+
+Set the deployment prefix when building the Vite applications:
+
+```bash
+EASYPIC_DEPLOY_PREFIX=easypic pnpm -r build
+```
+
+The API session cookie must use the same path and should be HTTPS-only in production:
+
+```dotenv
+EASYPIC_COOKIE_PATH=/easypic/
+EASYPIC_COOKIE_SECURE=true
+```
+
+The [`deploy/`](deploy/) directory contains the Ubuntu ECS runtime installer, release installer, Nginx configuration, PM2 launcher, daily SQLite backup units, and the Let's Encrypt renewal hook used by the current deployment. The Nginx configuration serves the public app at `/easypic/`, the administration app at `/easypic/admin/`, and the API at `/easypic/api/` without claiming `/`.
 
 ## How It Works
 

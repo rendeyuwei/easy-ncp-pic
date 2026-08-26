@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 import type { UseMutationResult } from '@tanstack/react-query';
+import { Link } from '@tanstack/react-router';
 import { Button } from '../../components/ui/button';
 import {
   Dialog,
@@ -167,7 +168,7 @@ export function FilterCreateDialog({
           {!categories.length ? (
             <div className="form-warning">
               <p>发布滤镜前，请先创建至少一个分类。</p>
-              <a href="/admin/categories">前往分类管理</a>
+              <Link to="/categories">前往分类管理</Link>
             </div>
           ) : null}
           {inspection ? (

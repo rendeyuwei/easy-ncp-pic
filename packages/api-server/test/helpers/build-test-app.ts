@@ -15,6 +15,7 @@ export function testConfig(over: Partial<AppConfig> = {}): AppConfig {
     sessionSecret: 'test-session-secret',
     sessionTtlHours: 12,
     cookieSecure: false,
+    cookiePath: '/',
     adminUsername: 'admin',
     adminPassword: TEST_PASSWORD,
     argon2: { memoryCost: 1024, timeCost: 1, parallelism: 1 },

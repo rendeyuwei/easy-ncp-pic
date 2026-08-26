@@ -16,6 +16,7 @@ describe('loadConfig', () => {
     expect(c.sessionSecret).toBe('secret');
     expect(c.sessionTtlHours).toBe(12);
     expect(c.cookieSecure).toBe(false);
+    expect(c.cookiePath).toBe('/');
     expect(c.adminUsername).toBe('admin');
     expect(c.adminPassword).toBe('pw');
     expect(c.loginRateLimit.max).toBeGreaterThan(100); // dev: permissive
@@ -34,12 +35,14 @@ describe('loadConfig', () => {
       ...base,
       PORT: '8080',
       EASYPIC_COOKIE_SECURE: 'false',
+      EASYPIC_COOKIE_PATH: '/easypic/',
       EASYPIC_SESSION_TTL_HOURS: '24',
       EASYPIC_ADMIN_USERNAME: 'root',
       EASYPIC_LOGIN_RATE_MAX: '7',
     });
     expect(c.port).toBe(8080);
     expect(c.cookieSecure).toBe(false);
+    expect(c.cookiePath).toBe('/easypic/');
     expect(c.sessionTtlHours).toBe(24);
     expect(c.adminUsername).toBe('root');
     expect(c.loginRateLimit.max).toBe(7);

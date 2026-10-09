@@ -107,14 +107,27 @@ describe('inspectNcpFile', () => {
 
   it('keeps an unsupported parsed NCP available on the typed error', async () => {
     const unsupported = fixtureBytes.slice();
+    // The base Picture Control is a 16-bit big-endian code at 0x24..0x25, so both
+    // bytes have to change to leave the known table.
     unsupported[0x24] = 0xff;
+    unsupported[0x25] = 0xff;
 
     await expect(inspectNcpFile(fixtureFile(unsupported))).rejects.toMatchObject({
       code: 'UNSUPPORTED_NCP',
       inspection: {
         fileName: 'PICCON02.NCP',
-        parsed: { supported: false, basePictureControl: { code: 255, name: 'unknown' } },
+        parsed: { supported: false, basePictureControl: { code: 0xffff, name: 'unknown' } },
       },
+    });
+  });
+
+  it('round-trips a freshly parsed NCP through the stored-JSON reader', async () => {
+    const inspection = await inspectNcpFile(fixtureFile());
+
+    expect(parseStoredPictureControl(JSON.stringify(inspection.parsed))).toMatchObject({
+      basePictureControl: { code: 0x03c2, name: 'Neutral' },
+      contrast: { mode: 'curve', value: 0 },
+      brightness: { mode: 'curve', value: 0 },
     });
   });
 });
@@ -144,6 +157,35 @@ describe('parseStoredPictureControl', () => {
       sourceName: 'Fuji Astia',
       customCurve: { controlPoints: [{ x: 0, y: 0 }, { x: 255, y: 255 }] },
     });
+  });
+
+  it('still accepts rows stored before contrast/brightness existed', () => {
+    const legacy = JSON.parse(storedPictureControl()) as Record<string, unknown>;
+    expect(legacy.contrast).toBeUndefined();
+    expect(legacy.brightness).toBeUndefined();
+    expect(parseStoredPictureControl(storedPictureControl())).not.toBeNull();
+  });
+
+  it('accepts rows storing the 16-bit base code with curve-controlled contrast/brightness', () => {
+    const parsed = parseStoredPictureControl(storedPictureControl({
+      basePictureControl: { code: 0x03c2, name: 'Neutral' },
+      contrast: { mode: 'curve', value: 0 },
+      brightness: { mode: 'auto', value: 0 },
+    }));
+
+    expect(parsed).toMatchObject({
+      basePictureControl: { code: 0x03c2, name: 'Neutral' },
+      contrast: { mode: 'curve', value: 0 },
+      brightness: { mode: 'auto', value: 0 },
+    });
+  });
+
+  it.each([
+    { label: 'an unknown mode', override: { contrast: { mode: 'sin', value: 0 } } },
+    { label: 'a non-numeric value', override: { brightness: { mode: 'value', value: '3' } } },
+    { label: 'a missing mode', override: { contrast: { value: 3 } } },
+  ])('returns null for stored details with $label', ({ override }) => {
+    expect(parseStoredPictureControl(storedPictureControl(override))).toBeNull();
   });
 });
 

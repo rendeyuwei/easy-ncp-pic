@@ -1,11 +1,13 @@
 import { BinaryReader } from './reader';
-import { ADJ, CENTER } from './constants';
+import { ADJ, AUTO_BYTE, CENTER, CURVE_BYTE } from './constants';
 import { BASE_PICTURE_CONTROL, MONO_FILTER, TONING_TYPE, enumName } from './enums';
-import type { EnumValue } from './types';
+import type { AdjustLevel, EnumValue } from './types';
 
 export interface Adjustments {
   basePictureControl: EnumValue;
   sharpening: number;
+  contrast: AdjustLevel;
+  brightness: AdjustLevel;
   saturation: number;
   hue: number;
   monochromeFilter: EnumValue | null;
@@ -14,20 +16,49 @@ export interface Adjustments {
   warnings: string[];
 }
 
+/**
+ * Contrast/brightness byte. 0x01 means the custom curve drives this axis and 0x00
+ * means Auto; both have no numeric level, so `value` is 0 and only `mode` carries
+ * the information. Any other byte is 0x80-centered like the other adjustments.
+ * (Both genuine fixtures store 0x01.)
+ */
+export function decodeCurveLevel(byte: number): AdjustLevel {
+  if (byte === AUTO_BYTE) return { mode: 'auto', value: 0 };
+  if (byte === CURVE_BYTE) return { mode: 'curve', value: 0 };
+  return { mode: 'value', value: byte - CENTER };
+}
+
+/**
+ * Sharpening/saturation byte: 0x00 means Auto. The engine has no auto model for
+ * those axes, so Auto is approximated as 0 (neutral) and recorded as a warning.
+ */
+function decodeAutoCentered(byte: number, label: string, warnings: string[]): number {
+  if (byte === AUTO_BYTE) {
+    warnings.push(`auto ${label} approximated as 0`);
+    return 0;
+  }
+  return byte - CENTER;
+}
+
 export function readAdjustments(reader: BinaryReader): Adjustments {
   const warnings: string[] = [];
 
-  const basePictureControl = enumName(BASE_PICTURE_CONTROL, reader.uint8(ADJ.base));
+  // 16-bit big-endian code: PICCON02 stores 0x03c2 (Neutral), PICCON33 0x064d
+  // (Monochrome). A single-byte read would collide Standard/Vivid and
+  // Portrait/Landscape, which share their high byte.
+  const basePictureControl = enumName(BASE_PICTURE_CONTROL, reader.uint16BE(ADJ.base));
   if (basePictureControl.name === 'unknown') {
     warnings.push(`unknown base Picture Control code ${basePictureControl.code}`);
   }
 
-  const sharpening = reader.uint8(ADJ.sharpening) - CENTER;
+  const sharpening = decodeAutoCentered(reader.uint8(ADJ.sharpening), 'sharpening', warnings);
+  const contrast = decodeCurveLevel(reader.uint8(ADJ.contrast));
+  const brightness = decodeCurveLevel(reader.uint8(ADJ.brightness));
   // saturation/hue are color-mode adjustments. For monochrome bases the source
   // bytes are junk (typically 0xff -> 127); they are decoded and returned
   // verbatim, but consumers must ignore them when basePictureControl is
   // 'Monochrome' (see ParsedPictureControl.saturation in types.ts).
-  const saturation = reader.uint8(ADJ.saturation) - CENTER;
+  const saturation = decodeAutoCentered(reader.uint8(ADJ.saturation), 'saturation', warnings);
   const hue = reader.uint8(ADJ.hue) - CENTER;
 
   let monochromeFilter: EnumValue | null = null;
@@ -46,5 +77,16 @@ export function readAdjustments(reader: BinaryReader): Adjustments {
     toningStrength = reader.uint8(ADJ.toningStrength) - CENTER;
   }
 
-  return { basePictureControl, sharpening, saturation, hue, monochromeFilter, toningType, toningStrength, warnings };
+  return {
+    basePictureControl,
+    sharpening,
+    contrast,
+    brightness,
+    saturation,
+    hue,
+    monochromeFilter,
+    toningType,
+    toningStrength,
+    warnings,
+  };
 }

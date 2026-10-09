@@ -1,4 +1,5 @@
 import {
+  ADJ,
   OFF,
   NCP_SIGNATURE,
   NCP_ASCII_VERSION,
@@ -26,6 +27,12 @@ export interface BuildOptions {
   lut?: number[];
   /** 26-byte adjustment region (0x24..0x3D). */
   adjustments?: Uint8Array;
+  /**
+   * Base Picture Control code, written big-endian at 0x24..0x25. Wins over the
+   * base bytes inside `adjustments`, so a test can pass a region plus the code it
+   * wants to exercise.
+   */
+  baseCode?: number;
 }
 
 function defaultLut(): number[] {
@@ -51,6 +58,7 @@ export function buildNcp(opts: BuildOptions = {}): Uint8Array {
   for (let i = 0; i < name.length && i < OFF.nameLength; i++) buf[OFF.name + i] = name.charCodeAt(i);
 
   if (opts.adjustments) buf.set(opts.adjustments.subarray(0, 26), OFF.adjustments);
+  if (opts.baseCode !== undefined) dv.setUint16(ADJ.base, opts.baseCode, false);
 
   buf[OFF.curveEnabled] = opts.curveEnabled ?? 1;
   buf[OFF.curveGamma] = opts.gammaByte ?? 0x0f;

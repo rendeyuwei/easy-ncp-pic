@@ -33,6 +33,8 @@ export function parseNcp(input: Uint8Array): ParsedPictureControl {
     sourceName,
     basePictureControl: adj.basePictureControl,
     sharpening: adj.sharpening,
+    contrast: adj.contrast,
+    brightness: adj.brightness,
     saturation: adj.saturation,
     hue: adj.hue,
     monochromeFilter: adj.monochromeFilter,

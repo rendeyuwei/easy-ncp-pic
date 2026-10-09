@@ -595,7 +595,9 @@ describe('local-first filter creation', () => {
     }, 'NCP 文件已损坏或格式无效'],
     ['不支持', () => {
       const bytes = fixture02.slice();
+      // Base Picture Control is the 16-bit big-endian code at 0x24..0x25.
       bytes[0x24] = 0xff;
+      bytes[0x25] = 0xff;
       return ncpFile(bytes, 'unsupported.NCP');
     }, '当前不支持发布此 NCP'],
     ['超限', () => ncpFile(new Uint8Array(MAX_NCP_FILE_BYTES + 1), 'large.NCP'), 'NCP 文件不能超过 64 KiB'],

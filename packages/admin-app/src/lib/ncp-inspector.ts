@@ -1,4 +1,4 @@
-import { NcpParseError, parseNcp, type ParsedPictureControl } from '@easypic/ncp-parser';
+import { NcpParseError, parseNcp, type AdjustLevel, type ParsedPictureControl } from '@easypic/ncp-parser';
 
 export const MAX_NCP_FILE_BYTES = 64 * 1024;
 
@@ -132,6 +132,22 @@ function optionalNumber(value: unknown): value is number | null {
   return value === null || number(value);
 }
 
+function adjustLevel(value: unknown): value is AdjustLevel {
+  const item = record(value);
+  if (item === null) return false;
+  const mode = item.mode;
+  return (mode === 'curve' || mode === 'auto' || mode === 'value') && number(item.value);
+}
+
+/**
+ * contrast/brightness were added to schema v1 after rows were already stored, so
+ * parsed_json written by the older parser omits both keys. An absent field stays
+ * valid; a present one must be well-formed.
+ */
+function optionalAdjustLevel(value: unknown): boolean {
+  return value === undefined || adjustLevel(value);
+}
+
 function isParsedPictureControl(value: unknown): value is ParsedPictureControl {
   const parsed = record(value);
   if (
@@ -142,6 +158,8 @@ function isParsedPictureControl(value: unknown): value is ParsedPictureControl {
     !string(parsed.sourceName) ||
     !enumValue(parsed.basePictureControl) ||
     !number(parsed.sharpening) ||
+    !optionalAdjustLevel(parsed.contrast) ||
+    !optionalAdjustLevel(parsed.brightness) ||
     !number(parsed.saturation) ||
     !number(parsed.hue) ||
     !optionalEnum(parsed.monochromeFilter) ||

@@ -70,6 +70,31 @@ EASYPIC_COOKIE_SECURE=true
 
 The [`deploy/`](deploy/) directory contains the Ubuntu ECS runtime installer, release installer, Nginx configuration, PM2 launcher, daily SQLite backup units, and the Let's Encrypt renewal hook used by the current deployment. The Nginx configuration serves the public app at `/easypic/`, the administration app at `/easypic/admin/`, and the API at `/easypic/api/` without claiming `/`.
 
+## Administrator recovery
+
+Deployments built with `deploy/install-release.sh` keep their runtime environment in `/etc/easypic/easypic.env`, and the initial administrator password generated during the first install is written to `/root/easypic-initial-admin.txt`. `EASYPIC_ADMIN_PASSWORD` only seeds the account on the very first start — change it later with the operator CLI instead:
+
+```bash
+# Reset a forgotten password to a freshly generated one (printed once).
+sudo bash -c 'set -a; . /etc/easypic/easypic.env; set +a; cd /opt/easypic/current && node packages/api-server/dist/bin/admin.js reset-password admin --generate'
+```
+
+`admin.js` also supports `list` (usernames with created/changed timestamps, never hashes), `create <username>`, an interactive double prompt with echo disabled, and `--password-stdin` for piping. A password reset revokes every active session of that administrator. If even the CLI is unavailable, `EASYPIC_ADMIN_PASSWORD` plus `EASYPIC_ADMIN_RESET_PASSWORD=1` in the env file forces a one-time bootstrap reset at startup — remove the flag immediately afterwards, because every restart re-applies it. Run `pnpm --filter @easypic/api-server build` before using `pnpm --filter @easypic/api-server admin` locally.
+
+## Importing NCP files
+
+Bulk-import Nikon Picture Control files straight from the server with the `import-ncp` operator CLI:
+
+```bash
+# Preview what would happen (writes nothing):
+sudo bash -c 'set -a; . /etc/easypic/easypic.env; set +a; cd /opt/easypic/current && node packages/api-server/dist/bin/import-ncp.js /path/to/ncps --dry-run'
+
+# Import into the default 导入/imported category, or choose your own:
+sudo bash -c 'set -a; . /etc/easypic/easypic.env; set +a; cd /opt/easypic/current && node packages/api-server/dist/bin/import-ncp.js /path/to/ncps --category film --category-name 胶片'
+```
+
+Directories are scanned for `.NCP`/`.ncp` files; unsupported or invalid files are reported and skipped, files whose SHA-256 is already published are treated as duplicates, and the actual write happens in a single transaction. Optional metadata (display names, descriptions, categories, sort order, `enabled`, and a `Source: <url> · License: <license>` line) can be supplied through `--manifest manifest.json`; `--disabled` imports filters unpublished. Each run prints a per-file table and an `imported / duplicate / unsupported / invalid` summary.
+
 ## How It Works
 
 1. The browser reads your local photo, applies EXIF orientation, and prepares a responsive preview.

@@ -32,6 +32,13 @@ export class AdminRepository {
     return row ? map(row as Record<string, unknown>) : null;
   }
 
+  listAll(): AdminRecord[] {
+    return this.db
+      .prepare(`SELECT ${COLS} FROM admins ORDER BY created_at ASC`)
+      .all()
+      .map((r) => map(r as Record<string, unknown>));
+  }
+
   findByUsername(username: string): AdminRecord | null {
     const row = this.db.prepare(`SELECT ${COLS} FROM admins WHERE username = ?`).get(username);
     return row ? map(row as Record<string, unknown>) : null;

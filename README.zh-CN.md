@@ -70,6 +70,31 @@ EASYPIC_COOKIE_SECURE=true
 
 [`deploy/`](deploy/) 目录包含当前线上部署使用的 Ubuntu ECS 运行时安装脚本、版本安装脚本、Nginx 配置、PM2 启动脚本、SQLite 每日备份单元和 Let's Encrypt 续期钩子。Nginx 将公开应用挂载到 `/easypic/`、管理后台挂载到 `/easypic/admin/`、API 挂载到 `/easypic/api/`，不会占用 `/`。
 
+## 管理员账号恢复
+
+使用 `deploy/install-release.sh` 部署的服务器，其运行环境变量保存在 `/etc/easypic/easypic.env`，首次安装生成的初始管理员密码则写在 `/root/easypic-initial-admin.txt`。`EASYPIC_ADMIN_PASSWORD` 只在第一次启动时创建管理员，之后的密码修改请使用运维 CLI：
+
+```bash
+# 重置遗忘的密码：随机生成一个新密码，只在终端显示一次。
+sudo bash -c 'set -a; . /etc/easypic/easypic.env; set +a; cd /opt/easypic/current && node packages/api-server/dist/bin/admin.js reset-password admin --generate'
+```
+
+`admin.js` 还支持 `list`（列出用户名与创建/改密时间，绝不显示哈希）、`create <username>`、交互式双次隐藏输入，以及适合管道输入的 `--password-stdin`。重置密码会同时吊销该管理员的全部登录会话。如果连 CLI 都无法使用，可以在环境文件里临时设置 `EASYPIC_ADMIN_PASSWORD` 加 `EASYPIC_ADMIN_RESET_PASSWORD=1`，启动时会一次性强制重置——用完必须立刻移除该开关，否则每次重启都会覆盖手动修改过的密码。本地使用前请先执行 `pnpm --filter @easypic/api-server build`，然后可用 `pnpm --filter @easypic/api-server admin` 运行。
+
+## 批量导入 NCP 文件
+
+可以直接在服务器上用 `import-ncp` 运维 CLI 批量导入 Nikon Picture Control 文件：
+
+```bash
+# 先试运行（不写入任何数据）：
+sudo bash -c 'set -a; . /etc/easypic/easypic.env; set +a; cd /opt/easypic/current && node packages/api-server/dist/bin/import-ncp.js /path/to/ncps --dry-run'
+
+# 正式导入到默认的「导入/imported」分类，或自定义分类：
+sudo bash -c 'set -a; . /etc/easypic/easypic.env; set +a; cd /opt/easypic/current && node packages/api-server/dist/bin/import-ncp.js /path/to/ncps --category film --category-name 胶片'
+```
+
+目录参数会扫描其中的 `.NCP`/`.ncp` 文件；无法支持或格式非法的文件会被报告并跳过；SHA-256 已存在的文件按重复处理；实际写入在一个事务中完成。可通过 `--manifest manifest.json` 提供展示名、描述、分类、排序、`enabled` 以及 `Source: <url> · License: <license>` 附加信息等元数据，`--disabled` 则以未发布状态导入。每次运行都会输出逐文件表格和 `imported / duplicate / unsupported / invalid` 汇总。
+
 ## 工作原理
 
 1. 浏览器读取本地照片、修正 EXIF 方向，并生成适合当前设备的预览。

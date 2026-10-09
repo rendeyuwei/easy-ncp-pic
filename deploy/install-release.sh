@@ -87,3 +87,11 @@ for attempt in {1..20}; do
 done
 curl -fsS http://127.0.0.1/easypic/api/health >/dev/null
 systemctl start easypic-backup.service
+
+# Operator commands on the server (the initial admin password created above lives in
+# /root/easypic-initial-admin.txt; EASYPIC_ADMIN_PASSWORD only seeds the very first start):
+#   sudo bash -c 'set -a; . /etc/easypic/easypic.env; set +a; cd /opt/easypic/current && node packages/api-server/dist/bin/admin.js reset-password admin --generate'
+#   sudo bash -c 'set -a; . /etc/easypic/easypic.env; set +a; cd /opt/easypic/current && node packages/api-server/dist/bin/import-ncp.js /path/to/ncps --dry-run'
+# If the CLI is unavailable, a one-time bootstrap reset can be forced at startup by adding
+# EASYPIC_ADMIN_RESET_PASSWORD=1 next to EASYPIC_ADMIN_PASSWORD, restarting easypic-api,
+# and then removing the flag immediately (every restart re-applies it).

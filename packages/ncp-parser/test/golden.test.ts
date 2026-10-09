@@ -12,6 +12,7 @@ const FIXTURES = {
     sha256: 'ed53222f4a2329c3f42a2dd6391b4b62d1214b1e3eac917d9bd11a8f22f9e43f',
     name: 'Fuji Astia',
     base: 'Neutral',
+    baseCode: 0x03c2, // 16-bit big-endian 0x24..0x25 = `03 c2`
     sharpening: 2,
     saturation: 0,
     hue: 0,
@@ -21,6 +22,7 @@ const FIXTURES = {
     sha256: '5a3e2e9a768234f0fa653f1fc50eef3993118788737e57fe4bbd8d219fa8bc12',
     name: 'SHING TokugawaTone2',
     base: 'Monochrome',
+    baseCode: 0x064d, // 16-bit big-endian 0x24..0x25 = `06 4d`
     sharpening: 2,
     filter: 0x83,
     toning: 0x84,
@@ -46,10 +48,13 @@ describe('golden: PICCON02.NCP', () => {
   it('parses name, base, and adjustments', () => {
     const r = parseNcp(bytes);
     expect(r.sourceName).toBe(f.name);
-    expect(r.basePictureControl.name).toBe(f.base);
+    expect(r.basePictureControl).toEqual({ code: f.baseCode, name: f.base });
     expect(r.sharpening).toBe(f.sharpening);
     expect(r.saturation).toBe(f.saturation);
     expect(r.hue).toBe(f.hue);
+    // 0x29/0x2a hold 0x01 in this fixture: the custom curve drives both axes.
+    expect(r.contrast).toEqual({ mode: 'curve', value: 0 });
+    expect(r.brightness).toEqual({ mode: 'curve', value: 0 });
     expect(r.monochromeFilter).toBeNull();
     expect(r.supported).toBe(true);
     expect(r.warnings).toHaveLength(0);
@@ -71,10 +76,13 @@ describe('golden: PICCON33.NCP', () => {
   it('parses monochrome adjustments', () => {
     const r = parseNcp(bytes);
     expect(r.sourceName).toBe(f.name);
-    expect(r.basePictureControl.name).toBe(f.base);
+    expect(r.basePictureControl).toEqual({ code: f.baseCode, name: f.base });
     expect(r.sharpening).toBe(f.sharpening);
+    expect(r.contrast).toEqual({ mode: 'curve', value: 0 });
+    expect(r.brightness).toEqual({ mode: 'curve', value: 0 });
     expect(r.monochromeFilter?.code).toBe(f.filter);
     expect(r.toningType?.code).toBe(f.toning);
+    expect(r.toningType?.name).toBe('Yellow');
     expect(r.toningStrength).toBe(f.toningStrength);
     expect(r.supported).toBe(true);
     expect(r.warnings).toHaveLength(0);

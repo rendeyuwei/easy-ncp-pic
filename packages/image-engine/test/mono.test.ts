@@ -42,3 +42,45 @@ describe('mono', () => {
     expect(strong[1]).toBeLessThan(weak[1]);
   });
 });
+
+/**
+ * The camera toning list, codes 0x80..0x89 in menu order. 0x80 'B&W' means "no
+ * toning", so it is the one option without a tint (see @easypic/ncp-parser's
+ * TONING_TYPE table, which this must stay in step with). `max`/`min` are the
+ * channel indices (0=r, 1=g, 2=b) a tint is expected to lead with and to suppress.
+ */
+const TONING = [
+  { code: 0x81, name: 'Sepia', max: 0, min: 2 },
+  { code: 0x82, name: 'Cyanotype', max: 2, min: 0 },
+  { code: 0x83, name: 'Red', max: 0, min: 2 },
+  { code: 0x84, name: 'Yellow', max: 0, min: 2 }, // fixture-verified code: PICCON33
+  { code: 0x85, name: 'Green', max: 1, min: 0 },
+  { code: 0x86, name: 'Blue Green', max: 2, min: 0 },
+  { code: 0x87, name: 'Blue', max: 2, min: 0 },
+  { code: 0x88, name: 'Purple Blue', max: 2, min: 1 },
+  { code: 0x89, name: 'Red Purple', max: 0, min: 1 },
+];
+
+describe('TONING_COLORS', () => {
+  it('covers every camera toning option and nothing else', () => {
+    expect(Object.keys(TONING_COLORS).map(Number).sort((a, b) => a - b)).toEqual(TONING.map((t) => t.code));
+    expect(TONING_COLORS[0x80]).toBeUndefined(); // 'B&W' stays untinted
+    expect(toningColorFor(0x80)).toBeNull();
+  });
+
+  it.each(TONING)('gives $name a bounded tint', ({ code, max, min }) => {
+    const color = TONING_COLORS[code];
+    if (!color) throw new Error(`missing tint for 0x${code.toString(16)}`);
+    for (const channel of color) {
+      expect(channel).toBeGreaterThanOrEqual(0);
+      expect(channel).toBeLessThanOrEqual(1);
+    }
+    expect(color.indexOf(Math.max(...color))).toBe(max);
+    expect(color.indexOf(Math.min(...color))).toBe(min);
+  });
+
+  it('gives each option its own tint', () => {
+    const tints = new Set(TONING.map(({ code }) => JSON.stringify(TONING_COLORS[code])));
+    expect(tints.size).toBe(TONING.length);
+  });
+});

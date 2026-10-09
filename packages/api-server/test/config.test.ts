@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { loadConfig } from '../src/config';
+import { loadAdminCliConfig, loadConfig } from '../src/config';
 
 const base = {
   EASYPIC_DB: '/data/app.db',
@@ -54,5 +54,31 @@ describe('loadConfig', () => {
 
   it('throws when EASYPIC_SESSION_SECRET is missing', () => {
     expect(() => loadConfig({ EASYPIC_DB: '/d.db', EASYPIC_ADMIN_PASSWORD: 'p' })).toThrow(/EASYPIC_SESSION_SECRET/);
+  });
+
+  it('parses adminResetPassword only for the exact value 1', () => {
+    expect(loadConfig({ NODE_ENV: 'development', ...base }).adminResetPassword).toBe(false);
+    expect(loadConfig({ NODE_ENV: 'development', ...base, EASYPIC_ADMIN_RESET_PASSWORD: '1' }).adminResetPassword).toBe(true);
+    expect(loadConfig({ NODE_ENV: 'development', ...base, EASYPIC_ADMIN_RESET_PASSWORD: 'true' }).adminResetPassword).toBe(false);
+    expect(loadConfig({ NODE_ENV: 'development', ...base, EASYPIC_ADMIN_RESET_PASSWORD: '01' }).adminResetPassword).toBe(false);
+  });
+});
+
+describe('loadAdminCliConfig', () => {
+  it('needs only EASYPIC_DB and keeps the env-based argon2 defaults', () => {
+    const c = loadAdminCliConfig({ NODE_ENV: 'production', EASYPIC_DB: '/d.db' });
+    expect(c.dbPath).toBe('/d.db');
+    expect(c.argon2).toEqual({ memoryCost: 65536, timeCost: 3, parallelism: 1 });
+    expect(() => loadAdminCliConfig({})).toThrow(/EASYPIC_DB/);
+  });
+
+  it('honors argon2 overrides independently of the server session config', () => {
+    const c = loadAdminCliConfig({
+      EASYPIC_DB: '/d.db',
+      EASYPIC_ARGON2_MEMORY_KIB: '2048',
+      EASYPIC_ARGON2_TIME: '2',
+      EASYPIC_ARGON2_PARALLELISM: '4',
+    });
+    expect(c.argon2).toEqual({ memoryCost: 2048, timeCost: 2, parallelism: 4 });
   });
 });

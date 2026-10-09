@@ -5,7 +5,7 @@ import { REC709 } from './color';
  * Documented, testable approximations (spec §10.2 "明确、可测试的亮度权重"); not Nikon-exact (spec §1.2).
  */
 export const MONO_FILTER_WEIGHTS: Readonly<Record<number, readonly [number, number, number]>> = {
-  0x80: REC709, // None
+  0x80: REC709, // None (camera "Off")
   0x81: [0.33, 0.6, 0.07], // Yellow
   0x82: [0.5, 0.45, 0.05], // Orange
   0x83: [0.7, 0.3, 0.0], // Red
@@ -13,14 +13,22 @@ export const MONO_FILTER_WEIGHTS: Readonly<Record<number, readonly [number, numb
   0x85: [0.0, 0.3, 0.7], // Blue
 };
 
-/** Toning tint colors, keyed by NCP toning code. 0x80 = None (no tint). Documented approximations. */
+/**
+ * Toning tint colors, keyed by the NCP toning code (0x80-centered) using Nikon's
+ * camera menu list: B&W, Sepia, Cyanotype, Red, Yellow, Green, Blue Green, Blue,
+ * Purple Blue, Red Purple. 0x80 'B&W' means "no toning", so it is deliberately
+ * absent and toningColorFor() returns null for it. Documented approximations.
+ */
 export const TONING_COLORS: Readonly<Record<number, readonly [number, number, number]>> = {
   0x81: [0.76, 0.6, 0.42], // Sepia
-  0x82: [0.5, 0.7, 0.7], // Cyan
-  0x83: [0.7, 0.5, 0.7], // Magenta
-  0x84: [0.7, 0.7, 0.5], // Yellow
-  0x85: [0.5, 0.7, 0.5], // Green
-  0x86: [0.5, 0.5, 0.7], // Blue
+  0x82: [0.55, 0.7, 0.78], // Cyanotype (blueprint cyan)
+  0x83: [0.8, 0.5, 0.45], // Red
+  0x84: [0.7, 0.7, 0.5], // Yellow (fixture-verified code: PICCON33)
+  0x85: [0.5, 0.74, 0.55], // Green
+  0x86: [0.48, 0.7, 0.72], // Blue Green (teal)
+  0x87: [0.5, 0.56, 0.78], // Blue
+  0x88: [0.58, 0.5, 0.78], // Purple Blue (violet)
+  0x89: [0.74, 0.5, 0.7], // Red Purple (magenta)
 };
 
 export function filterWeightsFor(code: number): readonly [number, number, number] {

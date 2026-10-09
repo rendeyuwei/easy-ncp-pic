@@ -18,6 +18,7 @@ export function testConfig(over: Partial<AppConfig> = {}): AppConfig {
     cookiePath: '/',
     adminUsername: 'admin',
     adminPassword: TEST_PASSWORD,
+    adminResetPassword: false,
     argon2: { memoryCost: 1024, timeCost: 1, parallelism: 1 },
     loginRateLimit: { max: 1000, timeWindow: '1 minute' },
     ...over,

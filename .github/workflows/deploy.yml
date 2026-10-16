@@ -27,7 +27,7 @@ jobs:
       cache: pnpm
       setup_command: corepack enable && corepack prepare pnpm@9.12.1 --activate
       install_command: pnpm install --frozen-lockfile
-      test_command: pnpm -r test
+      test_command: EASYPIC_DEPLOY_PREFIX=easypic pnpm -r build && pnpm -r test
       build_command: EASYPIC_DEPLOY_PREFIX=easypic pnpm -r build
       health_url: https://rende.fun/easypic/api/health
       health_body: '{"status":"ok","database":"ok"}'

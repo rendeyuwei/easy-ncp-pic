@@ -57,7 +57,7 @@ pnpm dev
 
 推到 `main`，或在 Actions 里手动运行 **deploy**，都会先测试这个仓库，再部署这次提交。后一次会等前一次，`cancel-in-progress` 保持为 false。调用方的并发组是 `easypic-deploy-caller`，不能写成 `rende-deploy-easypic`：[rende-deploy](https://github.com/rendeyuwei/rende-deploy) 已经占用这个名字，同名会互相等待，部署不会开始。
 
-[`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) 调用 `rendeyuwei/rende-deploy/.github/workflows/deploy-project.yml@main`，项目 id 是 `easypic`。共享工作流会启用 pnpm `9.12.1`，执行 `pnpm install --frozen-lockfile` 和 `pnpm -r test`，再用下面的命令构建：
+[`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) 调用 `rendeyuwei/rende-deploy/.github/workflows/deploy-project.yml@main`，项目 id 是 `easypic`。共享工作流会启用 pnpm `9.12.1`，执行 `pnpm install --frozen-lockfile`，再执行 `EASYPIC_DEPLOY_PREFIX=easypic pnpm -r build && pnpm -r test`，让内部包在测试前已经构建好，然后用下面的命令再构建一次：
 
 ```bash
 EASYPIC_DEPLOY_PREFIX=easypic pnpm -r build

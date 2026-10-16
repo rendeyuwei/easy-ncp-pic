@@ -1,0 +1,38 @@
+name: deploy
+
+# Push to main, or run this workflow by hand. Do not add pull_request:
+# a same-repo pull request would be eligible for the deploy secrets.
+# The called workflow tests, then deploys. Do not add a kill switch.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# The caller's concurrency group does not use rende-deploy-easypic: the called
+# workflow already occupies that name. The same group waits on itself and the
+# run fails immediately with no jobs.
+concurrency:
+  group: easypic-deploy-caller
+  cancel-in-progress: false
+
+jobs:
+  release:
+    uses: rendeyuwei/rende-deploy/.github/workflows/deploy-project.yml@main
+    with:
+      project: easypic
+      node_version: "22"
+      cache: pnpm
+      setup_command: corepack enable && corepack prepare pnpm@9.12.1 --activate
+      install_command: pnpm install --frozen-lockfile
+      test_command: pnpm -r test
+      build_command: EASYPIC_DEPLOY_PREFIX=easypic pnpm -r build
+      health_url: https://rende.fun/easypic/api/health
+      health_body: '{"status":"ok","database":"ok"}'
+    secrets:
+      ECS_HOST: ${{ secrets.ECS_HOST }}
+      ECS_USER: ${{ secrets.ECS_USER }}
+      ECS_SSH_KEY: ${{ secrets.ECS_SSH_KEY }}
+      ECS_KNOWN_HOSTS: ${{ secrets.ECS_KNOWN_HOSTS }}

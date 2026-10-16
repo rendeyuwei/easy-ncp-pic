@@ -55,11 +55,23 @@ pnpm dev
 
 线上版本位于 <https://rende.fun/easypic/>。EasyPic 部署在 `/easypic/` 子路径下，因此域名根路径仍可留给独立首页。
 
-构建 Vite 应用时需要设置部署前缀：
+推到 `main`，或在 Actions 里手动运行 **deploy**，都会先测试这个仓库，再部署这次提交。后一次会等前一次，`cancel-in-progress` 保持为 false。调用方的并发组是 `easypic-deploy-caller`，不能写成 `rende-deploy-easypic`：[rende-deploy](https://github.com/rendeyuwei/rende-deploy) 已经占用这个名字，同名会互相等待，部署不会开始。
+
+[`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) 调用 `rendeyuwei/rende-deploy/.github/workflows/deploy-project.yml@main`，项目 id 是 `easypic`。共享工作流会启用 pnpm `9.12.1`，执行 `pnpm install --frozen-lockfile` 和 `pnpm -r test`，再用下面的命令构建：
 
 ```bash
 EASYPIC_DEPLOY_PREFIX=easypic pnpm -r build
 ```
+
+这些检查通过后，没有可以跳过部署的开关。远程只执行：
+
+```bash
+deploy easypic <40位 git sha>
+```
+
+`ECS_USER` 是 `rende-deploy`。强制命令是 `/usr/local/libexec/rende-deploy/receive-deploy.sh`。这个作业不用 rsync，也不打开远程 shell。SSH 成功后请求 `https://rende.fun/easypic/api/health`，响应正文必须是 `{"status":"ok","database":"ok"}`。
+
+`ECS_HOST`、`ECS_USER`、`ECS_SSH_KEY`、`ECS_KNOWN_HOSTS` 是本仓库的 secret，不要写进仓库。
 
 API 会话 Cookie 需要使用相同路径，并在生产环境中限制为仅 HTTPS：
 
@@ -68,7 +80,9 @@ EASYPIC_COOKIE_PATH=/easypic/
 EASYPIC_COOKIE_SECURE=true
 ```
 
-[`deploy/`](deploy/) 目录包含当前线上部署使用的 Ubuntu ECS 运行时安装脚本、版本安装脚本、Nginx 配置、PM2 启动脚本、SQLite 每日备份单元和 Let's Encrypt 续期钩子。Nginx 将公开应用挂载到 `/easypic/`、管理后台挂载到 `/easypic/admin/`、API 挂载到 `/easypic/api/`，不会占用 `/`。
+这些值与会话密钥、数据库路径一起放在服务器上的 `/etc/easypic/easypic.env`，不进入本仓库。`deploy/start-api.sh` 会 source 这个文件，因此 `rende-deploy` 用户必须能读取它。PM2 应用 `easypic-api` 以该用户运行，工作目录是 `/opt/easypic/current`，`PM2_HOME=/opt/easypic/.pm2`（对照 rende-deploy 的 `server/examples/systemd/pm2-easypic.service`）。
+
+[`deploy/`](deploy/) 目录包含 Ubuntu ECS 运行时安装脚本、版本安装脚本、Nginx 配置、PM2 启动脚本、SQLite 每日备份单元和 Let's Encrypt 续期钩子。Nginx 将公开应用挂载到 `/easypic/`、管理后台挂载到 `/easypic/admin/`、API 挂载到 `/easypic/api/`，不会占用 `/`。共享接收器从 `/opt/easypic/current` 重启 API，不会把静态文件复制到 `/var/www/easypic`。要让 HTML、CSS 和 JS 随部署更新，需要让这些 Nginx location 指向 release。
 
 ## 管理员账号恢复
 

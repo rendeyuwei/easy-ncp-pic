@@ -55,11 +55,23 @@ The launcher builds the internal libraries and starts the API, public editor, an
 
 The public deployment is available at <https://rende.fun/easypic/>. EasyPic is hosted below `/easypic/` so the domain root remains available for a separate home page.
 
-Set the deployment prefix when building the Vite applications:
+Pushing to `main`, or running the **deploy** workflow by hand, tests this repository and then deploys that commit. A later run waits; `cancel-in-progress` stays false. The caller concurrency group is `easypic-deploy-caller`. It must not be `rende-deploy-easypic`: [rende-deploy](https://github.com/rendeyuwei/rende-deploy) already uses that group, and the same name deadlocks the run.
+
+[`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) calls `rendeyuwei/rende-deploy/.github/workflows/deploy-project.yml@main` with project id `easypic`. The shared workflow enables pnpm `9.12.1`, installs with a frozen lockfile, runs `pnpm -r test`, then builds with:
 
 ```bash
 EASYPIC_DEPLOY_PREFIX=easypic pnpm -r build
 ```
+
+There is no switch that skips deploy after those checks pass. The only remote command is:
+
+```bash
+deploy easypic <40-character git sha>
+```
+
+`ECS_USER` is `rende-deploy`. The forced command is `/usr/local/libexec/rende-deploy/receive-deploy.sh`. This job does not rsync and does not open a remote shell. After SSH succeeds, it requests `https://rende.fun/easypic/api/health` and requires `{"status":"ok","database":"ok"}`.
+
+`ECS_HOST`, `ECS_USER`, `ECS_SSH_KEY`, and `ECS_KNOWN_HOSTS` are secrets on this repository. Do not commit them.
 
 The API session cookie must use the same path and should be HTTPS-only in production:
 
@@ -68,7 +80,9 @@ EASYPIC_COOKIE_PATH=/easypic/
 EASYPIC_COOKIE_SECURE=true
 ```
 
-The [`deploy/`](deploy/) directory contains the Ubuntu ECS runtime installer, release installer, Nginx configuration, PM2 launcher, daily SQLite backup units, and the Let's Encrypt renewal hook used by the current deployment. The Nginx configuration serves the public app at `/easypic/`, the administration app at `/easypic/admin/`, and the API at `/easypic/api/` without claiming `/`.
+Those values live in `/etc/easypic/easypic.env` on the server, with the session secret and the database path. The file stays out of this repository. `deploy/start-api.sh` sources it, so the `rende-deploy` user has to be able to read it. PM2 app `easypic-api` runs as that user from `/opt/easypic/current`, with `PM2_HOME=/opt/easypic/.pm2` (see rende-deploy `server/examples/systemd/pm2-easypic.service`).
+
+The [`deploy/`](deploy/) directory contains the Ubuntu ECS runtime installer, release installer, Nginx configuration, PM2 launcher, daily SQLite backup units, and the Let's Encrypt renewal hook. Nginx serves the public app at `/easypic/`, the administration app at `/easypic/admin/`, and the API at `/easypic/api/` without claiming `/`. The shared receiver restarts the API from `/opt/easypic/current` and does not copy static files into `/var/www/easypic`. Point those Nginx locations at the release before expecting HTML, CSS, and JS to change with a deploy.
 
 ## Administrator recovery
 

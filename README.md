@@ -57,7 +57,7 @@ The public deployment is available at <https://rende.fun/easypic/>. EasyPic is h
 
 Pushing to `main`, or running the **deploy** workflow by hand, tests this repository and then deploys that commit. A later run waits; `cancel-in-progress` stays false. The caller concurrency group is `easypic-deploy-caller`. It must not be `rende-deploy-easypic`: [rende-deploy](https://github.com/rendeyuwei/rende-deploy) already uses that group, and the same name deadlocks the run.
 
-[`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) calls `rendeyuwei/rende-deploy/.github/workflows/deploy-project.yml@main` with project id `easypic`. The shared workflow enables pnpm `9.12.1`, installs with a frozen lockfile, runs `pnpm -r test`, then builds with:
+[`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) calls `rendeyuwei/rende-deploy/.github/workflows/deploy-project.yml@main` with project id `easypic`. The shared workflow enables pnpm `9.12.1`, installs with a frozen lockfile, then runs `EASYPIC_DEPLOY_PREFIX=easypic pnpm -r build && pnpm -r test` so the internal packages exist before the tests. It builds again with:
 
 ```bash
 EASYPIC_DEPLOY_PREFIX=easypic pnpm -r build

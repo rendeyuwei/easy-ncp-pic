@@ -96,7 +96,7 @@ html {
 }
 
 body {
-  min-height: 100dvh;
+  min-height: calc(100dvh - var(--rf-h, 0px));
   margin: 0;
   background:
     radial-gradient(circle at 14% -10%, color-mix(in srgb, var(--accent) 8%, transparent), transparent 28rem),
@@ -202,7 +202,7 @@ textarea:focus-visible,
 .boundary-page,
 .login-page {
   display: grid;
-  min-height: 100dvh;
+  min-height: calc(100dvh - var(--rf-h, 0px));
   place-items: center;
   padding: 24px;
 }
@@ -326,14 +326,14 @@ textarea:focus-visible,
 
 .admin-shell {
   display: grid;
-  min-height: 100dvh;
+  min-height: calc(100dvh - var(--rf-h, 0px));
   grid-template-columns: 248px minmax(0, 1fr);
 }
 
 .admin-sidebar {
   position: sticky;
-  top: 0;
-  height: 100dvh;
+  top: var(--rf-h, 0px);
+  height: calc(100dvh - var(--rf-h, 0px));
   padding: 22px 18px;
   border-right: 1px solid var(--border);
   background: color-mix(in srgb, var(--surface) 92%, transparent);
@@ -379,7 +379,7 @@ textarea:focus-visible,
 .admin-header {
   position: sticky;
   z-index: 20;
-  top: 0;
+  top: var(--rf-h, 0px);
   display: flex;
   min-height: 70px;
   align-items: center;
@@ -1004,7 +1004,10 @@ textarea:focus-visible,
 .dialog__overlay {
   position: fixed;
   z-index: 40;
-  inset: 0;
+  top: var(--rf-h, 0px);
+  right: 0;
+  bottom: 0;
+  left: 0;
   background: rgb(0 0 0 / 64%);
   backdrop-filter: blur(6px);
 }

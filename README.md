@@ -82,11 +82,11 @@ EASYPIC_COOKIE_SECURE=true
 
 Those values live in `/etc/easypic/easypic.env` on the server, with the session secret and the database path. The file stays out of this repository. `deploy/start-api.sh` sources it, so the `rende-deploy` user has to be able to read it. PM2 app `easypic-api` runs as that user from `/opt/easypic/current`, with `PM2_HOME=/opt/easypic/.pm2` (see rende-deploy `server/examples/systemd/pm2-easypic.service`).
 
-The [`deploy/`](deploy/) directory contains the Ubuntu ECS runtime installer, release installer, Nginx configuration, PM2 launcher, daily SQLite backup units, and the Let's Encrypt renewal hook. Nginx serves the public app at `/easypic/`, the administration app at `/easypic/admin/`, and the API at `/easypic/api/` without claiming `/`. The shared receiver restarts the API from `/opt/easypic/current` and does not copy static files into `/var/www/easypic`. Point those Nginx locations at the release before expecting HTML, CSS, and JS to change with a deploy.
+The [`deploy/`](deploy/) directory contains the Ubuntu ECS runtime installer, Nginx configuration, PM2 launcher, daily SQLite backup units, and the Let's Encrypt renewal hook. Nginx serves the public app from `/opt/easypic/current/packages/web-app/dist` at `/easypic/`, the administration app from `/opt/easypic/current/packages/admin-app/dist` at `/easypic/admin/`, and the API at `/easypic/api/` without claiming `/`.
 
 ## Administrator recovery
 
-Deployments built with `deploy/install-release.sh` keep their runtime environment in `/etc/easypic/easypic.env`, and the initial administrator password generated during the first install is written to `/root/easypic-initial-admin.txt`. `EASYPIC_ADMIN_PASSWORD` only seeds the account on the very first start — change it later with the operator CLI instead:
+The runtime environment stays in `/etc/easypic/easypic.env`, and the initial administrator password generated during the first install is written to `/root/easypic-initial-admin.txt`. `EASYPIC_ADMIN_PASSWORD` only seeds the account on the very first start — change it later with the operator CLI instead:
 
 ```bash
 # Reset a forgotten password to a freshly generated one (printed once).

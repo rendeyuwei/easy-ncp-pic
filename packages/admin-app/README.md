@@ -17,15 +17,4 @@ pnpm --filter @easypic/admin-app test:e2e
 
 ## 部署
 
-构建后的 `dist/` 内容复制到 `/var/www/easypic/admin/`。Nginx 需要为客户端路由提供以下 fallback：
-
-```nginx
-location = /admin {
-    return 308 /admin/;
-}
-
-location ^~ /admin/ {
-    root /var/www/easypic;
-    try_files $uri $uri/ /admin/index.html;
-}
-```
+Nginx 直接提供 `/opt/easypic/current/packages/admin-app/dist`，挂在 `/easypic/admin/`。未知的前端路由回退到该目录的 `index.html`，`/easypic/api/` 单独反代到 Fastify。

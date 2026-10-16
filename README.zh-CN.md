@@ -82,11 +82,11 @@ EASYPIC_COOKIE_SECURE=true
 
 这些值与会话密钥、数据库路径一起放在服务器上的 `/etc/easypic/easypic.env`，不进入本仓库。`deploy/start-api.sh` 会 source 这个文件，因此 `rende-deploy` 用户必须能读取它。PM2 应用 `easypic-api` 以该用户运行，工作目录是 `/opt/easypic/current`，`PM2_HOME=/opt/easypic/.pm2`（对照 rende-deploy 的 `server/examples/systemd/pm2-easypic.service`）。
 
-[`deploy/`](deploy/) 目录包含 Ubuntu ECS 运行时安装脚本、版本安装脚本、Nginx 配置、PM2 启动脚本、SQLite 每日备份单元和 Let's Encrypt 续期钩子。Nginx 将公开应用挂载到 `/easypic/`、管理后台挂载到 `/easypic/admin/`、API 挂载到 `/easypic/api/`，不会占用 `/`。共享接收器从 `/opt/easypic/current` 重启 API，不会把静态文件复制到 `/var/www/easypic`。要让 HTML、CSS 和 JS 随部署更新，需要让这些 Nginx location 指向 release。
+[`deploy/`](deploy/) 目录包含 Ubuntu ECS 运行时安装脚本、Nginx 配置、PM2 启动脚本、SQLite 每日备份单元和 Let's Encrypt 续期钩子。Nginx 从 `/opt/easypic/current/packages/web-app/dist` 提供 `/easypic/`，从 `/opt/easypic/current/packages/admin-app/dist` 提供 `/easypic/admin/`，并把 `/easypic/api/` 交给 API，不会占用 `/`。
 
 ## 管理员账号恢复
 
-使用 `deploy/install-release.sh` 部署的服务器，其运行环境变量保存在 `/etc/easypic/easypic.env`，首次安装生成的初始管理员密码则写在 `/root/easypic-initial-admin.txt`。`EASYPIC_ADMIN_PASSWORD` 只在第一次启动时创建管理员，之后的密码修改请使用运维 CLI：
+运行环境变量保存在 `/etc/easypic/easypic.env`，首次安装生成的初始管理员密码则写在 `/root/easypic-initial-admin.txt`。`EASYPIC_ADMIN_PASSWORD` 只在第一次启动时创建管理员，之后的密码修改请使用运维 CLI：
 
 ```bash
 # 重置遗忘的密码：随机生成一个新密码，只在终端显示一次。

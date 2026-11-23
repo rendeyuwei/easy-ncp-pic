@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import type { PixelBuffer } from '@easypic/image-engine';
 import type { PublicCategory, PublicFilter } from '../lib/filters';
+import { fill } from '../lib/messages';
 import { drawPixelBuffer } from '../lib/pixels';
+import { useMessages } from '../locale-context';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 
 interface FilterThumbnailProps {
@@ -11,19 +13,21 @@ interface FilterThumbnailProps {
 }
 
 function FilterThumbnail({ filter, pixels, loading }: FilterThumbnailProps) {
+  const copy = useMessages();
   const canvas = useRef<HTMLCanvasElement>(null);
+  const previewLabel = fill(copy.filterPreview, { name: filter.displayName });
 
   useEffect(() => {
     if (canvas.current && pixels) drawPixelBuffer(canvas.current, pixels);
   }, [pixels]);
 
   if (pixels) {
-    return <canvas ref={canvas} className="filter-card__thumbnail" aria-label={`${filter.displayName} 滤镜预览`} />;
+    return <canvas ref={canvas} className="filter-card__thumbnail" aria-label={previewLabel} />;
   }
 
   return (
-    <span className="filter-card__placeholder" aria-label={`${filter.displayName} 滤镜预览`}>
-      {loading ? '正在生成预览' : '暂无预览'}
+    <span className="filter-card__placeholder" aria-label={previewLabel}>
+      {loading ? copy.generatingPreview : copy.noPreview}
     </span>
   );
 }
@@ -47,6 +51,7 @@ export function FilterBrowser({
   onVisibleFiltersChange,
   onSelect,
 }: FilterBrowserProps) {
+  const copy = useMessages();
   const firstCategory = categories[0];
   const [activeCategoryId, setActiveCategoryId] = useState(firstCategory?.id ?? '');
   const activeCategory = categories.find((item) => item.id === activeCategoryId) ?? firstCategory ?? null;
@@ -55,13 +60,13 @@ export function FilterBrowser({
     if (activeCategory) onVisibleFiltersChange(activeCategory.filters);
   }, [activeCategory, onVisibleFiltersChange]);
 
-  if (!activeCategory) return <p className="filter-browser__empty">暂无可用滤镜</p>;
+  if (!activeCategory) return <p className="filter-browser__empty">{copy.noFilters}</p>;
 
   return (
     <section className="filter-browser" aria-labelledby="filter-browser-title">
-      <h2 id="filter-browser-title">滤镜</h2>
+      <h2 id="filter-browser-title">{copy.filters}</h2>
       <Tabs value={activeCategory.id} onValueChange={setActiveCategoryId}>
-        <TabsList aria-label="滤镜分类">
+        <TabsList aria-label={copy.filterCategories}>
           {categories.map((category) => (
             <TabsTrigger key={category.id} value={category.id}>
               {category.name} <span aria-hidden="true">{category.filters.length}</span>
@@ -88,7 +93,7 @@ export function FilterBrowser({
                   />
                   <span className="filter-card__copy">
                     <strong>{filter.displayName}</strong>
-                    {pendingFilterId === filter.id ? <span className="filter-card__pending" aria-hidden="true">正在应用</span> : null}
+                    {pendingFilterId === filter.id ? <span className="filter-card__pending" aria-hidden="true">{copy.applyingShort}</span> : null}
                     <span>{filter.description}</span>
                   </span>
                 </button>

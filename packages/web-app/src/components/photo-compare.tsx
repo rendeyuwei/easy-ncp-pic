@@ -7,7 +7,9 @@ import {
   type PointerEvent,
 } from 'react';
 import type { PixelBuffer } from '@easypic/image-engine';
+import { fill } from '../lib/messages';
 import { drawPixelBuffer } from '../lib/pixels';
+import { useMessages } from '../locale-context';
 
 export interface PhotoCompareProps {
   original: PixelBuffer;
@@ -20,6 +22,7 @@ function clampPercentage(value: number): number {
 }
 
 export function PhotoCompare({ original, filtered, showOriginal }: PhotoCompareProps) {
+  const copy = useMessages();
   const originalCanvas = useRef<HTMLCanvasElement>(null);
   const filteredCanvas = useRef<HTMLCanvasElement>(null);
   const dragging = useRef(false);
@@ -57,8 +60,9 @@ export function PhotoCompare({ original, filtered, showOriginal }: PhotoCompareP
         aspectRatio: `${original.width} / ${original.height}`,
         '--photo-aspect': original.width / original.height,
       } as CSSProperties}
-      aria-label="照片滤镜预览"
+      aria-label={copy.compareFigure}
     >
+      <p id="compare-keys" className="visually-hidden">{copy.compareKeys}</p>
       <div
         className="photo-compare__surface"
         data-testid="compare-surface"
@@ -78,25 +82,27 @@ export function PhotoCompare({ original, filtered, showOriginal }: PhotoCompareP
           dragging.current = false;
         }}
       >
-        <canvas ref={originalCanvas} className="photo-compare__canvas" aria-label="原图" />
+        <canvas ref={originalCanvas} className="photo-compare__canvas" aria-label={copy.original} />
         <div
           className="photo-compare__filtered"
           data-testid="filtered-layer"
           aria-hidden={showOriginal ? 'true' : undefined}
           style={{ clipPath: `inset(0 0 0 ${showOriginal ? 100 : position}%)` }}
         >
-          <canvas ref={filteredCanvas} className="photo-compare__canvas" aria-label="滤镜效果" />
+          <canvas ref={filteredCanvas} className="photo-compare__canvas" aria-label={copy.filteredEffect} />
         </div>
         {!showOriginal ? (
           <div
             className="photo-compare__divider"
             role="slider"
             tabIndex={0}
-            aria-label="原图与滤镜对比"
+            aria-label={copy.compareSlider}
+            aria-describedby="compare-keys"
+            aria-keyshortcuts="ArrowLeft ArrowRight ArrowUp ArrowDown Home End"
             aria-valuemin={0}
             aria-valuemax={100}
             aria-valuenow={position}
-            aria-valuetext={`原图 ${position}%`}
+            aria-valuetext={fill(copy.compareValue, { percent: position })}
             style={{ left: `${position}%` }}
             onKeyDown={handleKeyDown}
           >
@@ -105,8 +111,8 @@ export function PhotoCompare({ original, filtered, showOriginal }: PhotoCompareP
         ) : null}
         {!showOriginal ? (
           <>
-            <span className="photo-compare__label" style={{ left: '12px' }}>原图</span>
-            <span className="photo-compare__label" style={{ right: '12px' }}>滤镜</span>
+            <span className="photo-compare__label" style={{ left: '12px' }}>{copy.original}</span>
+            <span className="photo-compare__label" style={{ right: '12px' }}>{copy.filterLabel}</span>
           </>
         ) : null}
       </div>

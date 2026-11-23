@@ -9,7 +9,10 @@ import {
   type WorkerEngineOptions,
   type WorkerLoadedImage,
 } from '@easypic/image-engine';
+import { useLang } from '../locale-context';
+import { AppError, codeForEngineMessage } from '../lib/app-error';
 import { toFilterParams, type PublicFilter } from '../lib/filters';
+import { messages, type Messages } from '../lib/messages';
 
 export type ImageEngineFactory = (options: WorkerEngineOptions) => WorkerEngine;
 
@@ -117,26 +120,25 @@ async function readFileBytes(file: File): Promise<Uint8Array> {
   });
 }
 
-function userError(error: unknown, phase: 'load' | 'render' | 'export'): string {
+function messageFor(error: unknown, phase: 'load' | 'render' | 'export', copy: Messages): string {
+  if (error instanceof AppError) return error.message;
   const message = error instanceof Error ? error.message : String(error);
-  if (phase === 'export') return `导出失败。编辑状态已保留，请重试。${message ? ` (${message})` : ''}`;
-  if (/80,?000,?000|total/i.test(message)) return '照片尺寸过大，请选择不超过 8000 万总像素的照片。';
-  if (/10000|side|dimension/i.test(message)) return '照片尺寸过大，请选择边长不超过 10000 像素的照片。';
-  if (/worker/i.test(message)) return '图片处理线程启动失败，请刷新页面后重试。';
-  if (phase === 'render') return '滤镜预览失败，请选择其他滤镜或重试。';
-  return '无法读取这张照片，请确认文件是有效的 JPG 或 PNG。';
+  return copy.errors[codeForEngineMessage(message, phase)];
 }
 
 export function useImageSession(
   filters: ReadonlyArray<PublicFilter>,
   engineFactory: ImageEngineFactory = createBrowserWorkerEngine,
 ): ImageSessionState {
+  const lang = useLang();
+  const copyRef = useRef(messages[lang]);
+  copyRef.current = messages[lang];
   const [fallbackNotice, setFallbackNotice] = useState<string | null>(null);
   const engineRef = useRef<WorkerEngine | null>(null);
   const engineFactoryRef = useRef(engineFactory);
   const getEngine = useCallback((): WorkerEngine => {
     if (!engineRef.current) engineRef.current = engineFactoryRef.current({
-      onFallback: () => setFallbackNotice('WebGL 不可用，已切换到兼容模式，处理速度可能较慢。'),
+      onFallback: () => setFallbackNotice(copyRef.current.errors['webgl-fallback']),
     });
     return engineRef.current;
   }, []);
@@ -278,7 +280,7 @@ export function useImageSession(
         }
         setPendingFilter(null);
         finishOperation('preview', request.token, {
-          error: preview ? null : userError(renderError, 'render'),
+          error: preview ? null : messageFor(renderError, 'render', copyRef.current),
         });
         request.resolve();
       }
@@ -410,7 +412,7 @@ export function useImageSession(
 
   const load = useCallback(async (file: File): Promise<void> => {
     if (!accepts(file)) {
-      setValidationError('请选择 JPG 或 PNG 照片。');
+      setValidationError(copyRef.current.errors['file-type']);
       return;
     }
     setValidationError(null);
@@ -464,7 +466,7 @@ export function useImageSession(
       if (token === loadToken.current) {
         thumbnailImageId.current = imageRef.current?.id ?? null;
         enqueueThumbnails(latestThumbnailFilters.current);
-        loadErrorMessage = userError(loadError, 'load');
+        loadErrorMessage = messageFor(loadError, 'load', copyRef.current);
       }
     } finally {
       if (loaded && !committed && engine) await engine.disposeImage(loaded).catch(() => undefined);
@@ -505,11 +507,13 @@ export function useImageSession(
   }, [queuePreview]);
 
   const exportImage = useCallback(async (options: ExportOptions): Promise<Uint8Array> => {
-    if (physicalExportInFlight.current) throw new Error('已有导出任务正在进行。');
+    if (physicalExportInFlight.current) {
+      throw new AppError('export-in-progress', copyRef.current.errors['export-in-progress']);
+    }
     const activeImage = imageRef.current;
     const selection = committedSelectionRef.current;
     const filter = selection.filter;
-    if (!activeImage || !filter) throw new Error('请先选择一个滤镜。');
+    if (!activeImage || !filter) throw new AppError('export-no-filter', copyRef.current.errors['export-no-filter']);
     const engine = getEngine();
     const token = ++exportToken.current;
     physicalExportInFlight.current = true;
@@ -526,7 +530,7 @@ export function useImageSession(
         } },
       );
     } catch (exportError) {
-      exportErrorMessage = userError(exportError, 'export');
+      exportErrorMessage = messageFor(exportError, 'export', copyRef.current);
       throw exportError;
     } finally {
       physicalExportInFlight.current = false;

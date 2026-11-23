@@ -1,5 +1,6 @@
 import { useState, type KeyboardEvent, type PointerEvent } from 'react';
 import { Download, Images, ScanEye } from 'lucide-react';
+import { useMessages } from '../locale-context';
 import { Button } from './ui/button';
 import { Slider } from './ui/slider';
 
@@ -24,6 +25,7 @@ export function EditorControls({
   onExport,
   onReplace,
 }: EditorControlsProps) {
+  const copy = useMessages();
   const [holding, setHolding] = useState(false);
 
   const setOriginal = (show: boolean): void => {
@@ -48,14 +50,15 @@ export function EditorControls({
   };
 
   return (
-    <section className="editor-controls" aria-label="照片调整">
+    <section className="editor-controls" aria-label={copy.adjustments}>
       <div className="intensity-control">
         <div className="control-label">
-          <label>滤镜强度</label>
+          <label>{copy.intensity}</label>
           <output>{Math.round(intensity * 100)}%</output>
         </div>
         <Slider
-          aria-label="滤镜强度"
+          aria-label={copy.intensity}
+          aria-valuetext={`${Math.round(intensity * 100)}%`}
           min={0}
           max={100}
           step={1}
@@ -76,13 +79,13 @@ export function EditorControls({
           onKeyDown={(event) => handleKey(event, true)}
           onKeyUp={(event) => handleKey(event, false)}
         >
-          <ScanEye aria-hidden="true" />按住看原图
+          <ScanEye aria-hidden="true" />{copy.holdOriginal}
         </Button>
         <Button variant="secondary" onClick={onReplace}>
-          <Images aria-hidden="true" />更换照片
+          <Images aria-hidden="true" />{copy.replacePhoto}
         </Button>
         <Button disabled={!canExport || busy} onClick={onExport}>
-          <Download aria-hidden="true" />导出
+          <Download aria-hidden="true" />{copy.exportAction}
         </Button>
       </div>
     </section>

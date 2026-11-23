@@ -1,22 +1,32 @@
 <!doctype html>
-<html lang="zh-CN" data-theme="dark">
+<html lang="zh-CN" data-theme="dark" data-easypic-prefix="__EASYPIC_PREFIX__">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="EasyPic — 在浏览器中为照片应用精选滤镜。" />
     <title>EasyPic</title>
-<script>
-var _hmt = _hmt || [];
-(function() {
-  var hm = document.createElement("script");
-  hm.src = "https://hm.baidu.com/hm.js?f4b1d2fc4d60c37f898b469f83237dab";
-  var s = document.getElementsByTagName("script")[0]; 
-  s.parentNode.insertBefore(hm, s);
+    <meta name="description" content="EasyPic — 在浏览器中为照片应用精选滤镜。" />
+    <link rel="canonical" href="__EASYPIC_CANONICAL_ZH__" />
+    <link rel="alternate" hreflang="zh-CN" href="__EASYPIC_CANONICAL_ZH__" />
+    <link rel="alternate" hreflang="en" href="__EASYPIC_CANONICAL_EN__" />
+    <link rel="alternate" hreflang="x-default" href="__EASYPIC_CANONICAL_EN__" />
+    <script src="/shell/lang.js" vite-ignore></script>
+    <script data-easypic-boot></script>
+    <script>
+(function () {
+  if ((window.rfLang && window.rfLang.leaving) || window.__easypicLeaving) return;
+  var _hmt = _hmt || [];
+  (function () {
+    var hm = document.createElement("script");
+    hm.src = "https://hm.baidu.com/hm.js?f4b1d2fc4d60c37f898b469f83237dab";
+    var s = document.getElementsByTagName("script")[0];
+    s.parentNode.insertBefore(hm, s);
+  })();
 })();
-</script>
-    <script src="/shell/topbar.js" defer vite-ignore></script>
+    </script>
+    <script src="/shell/topbar.js" defer data-tool="easypic" vite-ignore></script>
   </head>
   <body>
+    <noscript><p>请启用 JavaScript 后使用 EasyPic。</p></noscript>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

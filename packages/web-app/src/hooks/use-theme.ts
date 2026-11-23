@@ -4,9 +4,25 @@ export type Theme = 'dark' | 'light';
 
 const STORAGE_KEY = 'easypic-theme';
 
+function readStoredTheme(): string | null {
+  try {
+    return window.localStorage.getItem(STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function storeTheme(theme: Theme): void {
+  try {
+    window.localStorage.setItem(STORAGE_KEY, theme);
+  } catch {
+    // The selected theme still applies on the document when storage is blocked.
+  }
+}
+
 function initialTheme(): Theme {
   if (typeof window === 'undefined') return 'dark';
-  return window.localStorage.getItem(STORAGE_KEY) === 'light' ? 'light' : 'dark';
+  return readStoredTheme() === 'light' ? 'light' : 'dark';
 }
 
 export function useTheme() {
@@ -14,7 +30,7 @@ export function useTheme() {
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
-    window.localStorage.setItem(STORAGE_KEY, theme);
+    storeTheme(theme);
   }, [theme]);
 
   const toggleTheme = useCallback(() => {

@@ -6,7 +6,7 @@ import {
   type RouterHistory,
 } from '@tanstack/react-router';
 import { App } from './app';
-import { webBasepath } from './lib/deployment-paths';
+import { routerBasepath } from './lib/locale';
 
 const rootRoute = createRootRoute({
   component: Outlet,
@@ -20,7 +20,13 @@ const indexRoute = createRoute({
 
 const routeTree = rootRoute.addChildren([indexRoute]);
 
-export function createWebRouter(history?: RouterHistory, basepath = webBasepath()) {
+export function createWebRouter(
+  history?: RouterHistory,
+  basepath = routerBasepath(
+    typeof window === 'undefined' ? '/' : window.location.pathname,
+    import.meta.env.BASE_URL,
+  ),
+) {
   return createRouter({ routeTree, basepath, history });
 }
 

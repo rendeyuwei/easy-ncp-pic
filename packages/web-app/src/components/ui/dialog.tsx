@@ -2,6 +2,7 @@ import { forwardRef, type ComponentPropsWithoutRef, type ElementRef } from 'reac
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { X } from 'lucide-react';
 import { clsx } from 'clsx';
+import { useMessages } from '../../locale-context';
 
 export const Dialog = DialogPrimitive.Root;
 export const DialogTrigger = DialogPrimitive.Trigger;
@@ -13,19 +14,22 @@ interface DialogContentProps extends ComponentPropsWithoutRef<typeof DialogPrimi
 export const DialogContent = forwardRef<
   ElementRef<typeof DialogPrimitive.Content>,
   DialogContentProps
->(({ className, children, showClose = true, ...props }, ref) => (
+>(({ className, children, showClose = true, ...props }, ref) => {
+  const copy = useMessages();
+  return (
   <DialogPrimitive.Portal>
     <DialogPrimitive.Overlay className="dialog__overlay" />
     <DialogPrimitive.Content ref={ref} className={clsx('dialog__content', className)} {...props}>
       {children}
       {showClose ? (
-        <DialogPrimitive.Close className="dialog__close" aria-label="关闭">
+        <DialogPrimitive.Close className="dialog__close" aria-label={copy.close}>
           <X aria-hidden="true" />
         </DialogPrimitive.Close>
       ) : null}
     </DialogPrimitive.Content>
   </DialogPrimitive.Portal>
-));
+  );
+});
 DialogContent.displayName = DialogPrimitive.Content.displayName;
 
 export const DialogHeader = ({ className, ...props }: ComponentPropsWithoutRef<'div'>) => (

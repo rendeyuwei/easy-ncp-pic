@@ -183,6 +183,7 @@ input:focus-visible,
 .upload-card {
   width: min(100%, 630px);
   text-align: center;
+  overflow-wrap: break-word;
 }
 
 .brand-mark,
@@ -314,13 +315,16 @@ input:focus-visible,
 
 .header-actions {
   display: flex;
+  min-width: 0;
   align-items: center;
   gap: 10px;
 }
 
 .privacy-pill {
+  min-width: 0;
   color: var(--text-muted);
   font-size: 12px;
+  overflow-wrap: anywhere;
 }
 
 .editor-layout {
@@ -528,6 +532,12 @@ input:focus-visible,
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 9px;
+}
+
+.editor-actions .button {
+  min-width: 0;
+  white-space: normal;
+  text-align: center;
 }
 
 .editor-actions .button:last-child {

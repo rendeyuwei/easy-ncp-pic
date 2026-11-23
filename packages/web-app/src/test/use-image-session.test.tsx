@@ -982,7 +982,7 @@ describe('useImageSession', () => {
     });
     expect(result.current.image).toEqual(loaded);
     expect(result.current.selectedFilter?.id).toBe(filters[0].id);
-    expect(result.current.error).toBe('导出失败。编辑状态已保留，请重试。 (out of memory)');
+    expect(result.current.error).toBe('导出失败。编辑状态已保留，请重试。');
   });
 
   it.each(['preview-first', 'export-first'] as const)(
@@ -1081,7 +1081,7 @@ describe('useImageSession', () => {
       await rejection;
     });
     expect(result.current.busy).toBe(true);
-    expect(result.current.error).toBe('导出失败。编辑状态已保留，请重试。 (export failed)');
+    expect(result.current.error).toBe('导出失败。编辑状态已保留，请重试。');
 
     await act(async () => {
       preview.resolve(older);
@@ -1090,7 +1090,7 @@ describe('useImageSession', () => {
 
     expect(result.current.busy).toBe(false);
     expect(result.current.selectedFilter?.id).toBe(filters[1].id);
-    expect(result.current.error).toBe('导出失败。编辑状态已保留，请重试。 (export failed)');
+    expect(result.current.error).toBe('导出失败。编辑状态已保留，请重试。');
   });
 
   it('rejects a concurrent direct export without replacing the active export owner', async () => {

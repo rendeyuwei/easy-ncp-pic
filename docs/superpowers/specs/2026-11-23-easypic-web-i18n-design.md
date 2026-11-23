@@ -91,7 +91,7 @@ interface EnterDecision {
 
 ## 6. 会话与隐私
 
-普通左键点击同一挂载点下的对应语言链接（包括共享顶栏的 `a.rf-lang`）不整页加载。捕获阶段取消浏览器默认跳转，调用现有的 `rfLang.choose(lang)` 记下手动偏好，再用 TanStack history 把地址换成该链接的路径、query 和 hash。Ctrl、Meta、Shift、Alt、中键、`target="_blank"` 和 `download` 仍交给浏览器。返回和前进只改地址和界面语言，不写 `rf-lang`。直接打开或刷新仍由各自的静态 HTML 和启动脚本决定，英文页没有启动跳转，因此同页切换不会来回 `replace`。
+普通左键点击共享顶栏的 `a.rf-lang` 不整页加载。捕获阶段取消浏览器默认跳转，调用现有的 `rfLang.choose(lang)` 记下手动偏好，再用 TanStack history 把地址换成该链接的路径、query 和 hash。同一挂载点里的其他链接仍交给浏览器，包括英文页工具菜单里指向 `/easypic/` 的 EasyPic，不调用 `choose`。Ctrl、Meta、Shift、Alt、中键、`target="_blank"` 和 `download` 同样交给浏览器。返回和前进只改地址和界面语言，不写 `rf-lang`。直接打开或刷新仍由各自的静态 HTML 和启动脚本决定，英文页没有启动跳转，因此同页切换不会来回 `replace`。
 
 照片、已选滤镜、强度、对比位置、打开中的导出格式和进行中的导出任务留在布局组件里，不重新跑导出。已出现的错误按稳定 code 用当前语言重画。照片字节不写入 storage，也不发到新的服务。
 

@@ -46,11 +46,12 @@ function anchorFromEvent(event: MouseEvent): HTMLAnchorElement | null {
 export function installLanguageSwitch(
   navigate: (href: string) => Promise<void> | void,
   prefix = import.meta.env.BASE_URL,
+  assign: (href: string) => void = (href) => location.assign(href),
 ): () => void {
   const onClick = (event: MouseEvent): void => {
     if (!plainActivation(event)) return;
     const link = anchorFromEvent(event);
-    if (!link || link.target === '_blank' || link.hasAttribute('download')) return;
+    if (!link || !link.classList.contains('rf-lang') || link.target === '_blank' || link.hasAttribute('download')) return;
     const href = sameAppLanguageHref(location.href, link.href, prefix);
     if (!href) return;
     event.preventDefault();
@@ -62,17 +63,25 @@ export function installLanguageSwitch(
       // choose() already tolerates blocked storage; a thrown wrapper still should not block the switch.
     }
     void Promise.resolve(navigate(href)).then(() => {
-      syncSharedShell();
+      replaySharedShell();
     }).catch(() => {
-      location.assign(href);
+      assign(href);
     });
   };
   document.addEventListener('click', onClick, true);
-  window.addEventListener('popstate', syncSharedShell);
+  window.addEventListener('popstate', replaySharedShell);
   return () => {
     document.removeEventListener('click', onClick, true);
-    window.removeEventListener('popstate', syncSharedShell);
+    window.removeEventListener('popstate', replaySharedShell);
   };
+}
+
+function replaySharedShell(): void {
+  try {
+    syncSharedShell();
+  } catch {
+    // The address has already changed. A failed shell replay must not full-load the page.
+  }
 }
 
 // Temporary preview adapter. The shared topbar freezes its language at startup

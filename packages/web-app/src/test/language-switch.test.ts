@@ -57,6 +57,48 @@ describe('same-app language links', () => {
     delete window.rfLang;
   });
 
+  it('leaves the tools-menu EasyPic link as a normal navigation', async () => {
+    const navigate = vi.fn().mockResolvedValue(undefined);
+    const choose = vi.fn(() => true);
+    window.rfLang = { v: 1, leaving: false, enter() { return undefined; }, choose };
+    window.history.pushState(null, '', '/easypic/en/?album=1#panel');
+    document.body.innerHTML = '<a href="/easypic/">EasyPic</a>';
+    const stop = installLanguageSwitch(navigate, '/easypic/');
+    const link = document.querySelector('a');
+    link?.addEventListener('click', (event) => event.preventDefault());
+    link?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    await Promise.resolve();
+    expect(navigate).not.toHaveBeenCalled();
+    expect(choose).not.toHaveBeenCalled();
+    stop();
+    delete window.rfLang;
+  });
+
+  it('does not full-load after the address change when replaying the shell throws', async () => {
+    const navigate = vi.fn(async () => {
+      window.history.pushState(null, '', '/en/#stay');
+    });
+    const assign = vi.fn();
+    window.rfLang = { v: 1, leaving: false, enter() { return undefined; }, choose: () => true };
+    document.documentElement.setAttribute('data-easypic-prefix', '/');
+    window.history.pushState(null, '', '/');
+    document.body.innerHTML = '<a class="rf-lang" href="/en/#stay">EN</a><header class="rf-bar" lang="zh-CN"></header>';
+    const script = document.createElement('script');
+    script.src = '/shell/topbar.js';
+    script.replaceWith = () => {
+      throw new Error('replay failed');
+    };
+    document.head.append(script);
+    const stop = installLanguageSwitch(navigate, '/', assign);
+    document.querySelector('a')?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    await navigate.mock.results[0]?.value;
+    expect(navigate).toHaveBeenCalledWith('/en/#stay');
+    expect(assign).not.toHaveBeenCalled();
+    expect(window.location.pathname).toBe('/en/');
+    stop();
+    delete window.rfLang;
+  });
+
   it('does not intercept a stale toggle that still points at the current language', async () => {
     const navigate = vi.fn().mockResolvedValue(undefined);
     const choose = vi.fn(() => true);

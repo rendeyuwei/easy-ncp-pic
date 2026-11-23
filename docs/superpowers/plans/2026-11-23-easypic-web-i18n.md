@@ -96,4 +96,4 @@ pnpm --filter @easypic/web-app test:e2e:locale
 
 ## 同页切换
 
-普通点击由 `packages/web-app/src/lib/language-switch.ts` 接到 `router.navigate`。布局在 `packages/web-app/src/router.tsx` 的 `app` 路由，中文 `/`、英文 `/en`。回归：`src/test/language-switch.test.ts`、`src/test/locale-switch.test.tsx`，以及 `e2e/locale.spec.ts` 里带滤镜、强度、对比位置和导出格式的 zh→en→zh、后退和前进。顶栏正式刷新约定未到之前，预览只重放现有 `topbar.js`，不新增 `rfLang` 方法。
+普通点击由 `packages/web-app/src/lib/language-switch.ts` 接到 `router.navigate`。布局在 `packages/web-app/src/router.tsx` 的 `app` 路由，中文 `/`、英文 `/en`。不重放 `topbar.js`，不改 `__rfBar`。回归：监听次数、脚本请求、焦点、`/pics/en/` 不离开应用，以及滤镜、强度、对比位置和两次导出字节一致。可选挂载的用例待主站片段公布后接上。

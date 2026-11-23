@@ -1,4 +1,4 @@
-import { pageLang, parsePlace, type AppLang } from './locale';
+import { languageHref, normalizePrefix, parsePlace, type AppLang } from './locale';
 
 export function sameAppLanguageHref(currentHref: string, targetHref: string, prefix: string): string | null {
   let current: URL;
@@ -52,7 +52,7 @@ export function installLanguageSwitch(
     if (!plainActivation(event)) return;
     const link = anchorFromEvent(event);
     if (!link || !link.classList.contains('rf-lang') || link.target === '_blank' || link.hasAttribute('download')) return;
-    const href = sameAppLanguageHref(location.href, link.href, prefix);
+    const href = languageToggleHref(location.href, link.href, prefix);
     if (!href) return;
     event.preventDefault();
     event.stopPropagation();
@@ -62,48 +62,45 @@ export function installLanguageSwitch(
     } catch {
       // choose() already tolerates blocked storage; a thrown wrapper still should not block the switch.
     }
-    void Promise.resolve(navigate(href)).then(() => {
-      replaySharedShell();
-    }).catch(() => {
+    void Promise.resolve(navigate(href)).catch(() => {
       assign(href);
     });
   };
   document.addEventListener('click', onClick, true);
-  window.addEventListener('popstate', replaySharedShell);
   return () => {
     document.removeEventListener('click', onClick, true);
-    window.removeEventListener('popstate', replaySharedShell);
   };
 }
 
-function replaySharedShell(): void {
+// The shared shell's place() only knows its own site list. On another prefix it
+// classifies the page as the home site and builds a URL such as /en/pics/en/.
+// Keep that click inside this app. Do not replay topbar.js or touch __rfBar;
+// the shared mount contract is not published yet.
+export function languageToggleHref(currentHref: string, targetHref: string, prefix: string): string | null {
+  const sibling = sameAppLanguageHref(currentHref, targetHref, prefix);
+  if (sibling) return sibling;
+  if (!targetLeavesApp(currentHref, targetHref, prefix)) return null;
+  let current: URL;
   try {
-    syncSharedShell();
+    current = new URL(currentHref);
   } catch {
-    // The address has already changed. A failed shell replay must not full-load the page.
+    return null;
   }
+  const here = parsePlace(current.pathname, prefix);
+  return languageHref(here, here.lang === 'en' ? 'zh' : 'en', current.search, current.hash);
 }
 
-// Temporary preview adapter. The shared topbar freezes its language at startup
-// and only rewrites the toggle href on hashchange. Until the shell publishes its
-// own same-document update, replay the existing script so the preview matches
-// the URL. This does not add or wrap any rfLang method.
-export function syncSharedShell(): void {
-  const bar = document.querySelector('.rf-bar');
-  if (!bar) return;
-  const prefix = document.documentElement.getAttribute('data-easypic-prefix') || import.meta.env.BASE_URL;
-  const wanted = pageLang(location.pathname, location.search, prefix);
-  const shown: AppLang | null = bar.getAttribute('lang') === 'en' ? 'en' : 'zh';
-  if (shown === wanted) return;
-  const current = document.querySelector('script[src*="/shell/topbar.js"]');
-  if (!(current instanceof HTMLScriptElement)) return;
-  bar.remove();
-  delete window.__rfBar;
-  const next = document.createElement('script');
-  next.src = current.src;
-  const tool = current.getAttribute('data-tool');
-  const home = current.getAttribute('data-home');
-  if (tool) next.dataset.tool = tool;
-  if (home) next.dataset.home = home;
-  current.replaceWith(next);
+function targetLeavesApp(currentHref: string, targetHref: string, prefix: string): boolean {
+  let target: URL;
+  try {
+    target = new URL(targetHref, currentHref);
+    const current = new URL(currentHref);
+    if (target.origin !== current.origin) return true;
+  } catch {
+    return true;
+  }
+  const normalized = normalizePrefix(prefix);
+  if (!normalized) return false;
+  const path = target.pathname;
+  return path !== normalized && path !== `${normalized}/` && !path.startsWith(`${normalized}/`);
 }

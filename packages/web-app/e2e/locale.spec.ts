@@ -167,6 +167,8 @@ test.describe('production language entries', () => {
     await expect(page.locator('.rf-menu a').first()).toHaveAttribute('href', '/easypic/');
     await page.getByRole('link', { name: '中文' }).click();
     await expect(page).toHaveURL(/\/easypic\/\?lang=zh#direct/);
+    await expect(page.getByRole('heading', { name: '让照片呈现你想要的质感' })).toBeVisible();
+    await page.reload();
     await page.getByRole('button', { name: '工具' }).click();
     const toolHrefs = await page.locator('.rf-menu a').evaluateAll((links) => links.map((link) => link.getAttribute('href')));
     expect(toolHrefs).toEqual(['/easypic/?lang=zh', '/shutter/?lang=zh', '/recipes/?lang=zh', '/?lang=zh']);
@@ -195,6 +197,28 @@ test('keeps the photo and edits across topbar language changes', async ({ page }
   const requests: Request[] = [];
   await installApi(page, requests);
   await setLanguages(page, ['zh-CN', 'en-US']);
+  await page.addInitScript(() => {
+    const counts = { click: 0, keydown: 0, hashchange: 0 };
+    const doc = Document.prototype.addEventListener;
+    const win = Window.prototype.addEventListener;
+    Document.prototype.addEventListener = function (
+      type: string,
+      listener: EventListenerOrEventListenerObject,
+      options?: boolean | AddEventListenerOptions,
+    ) {
+      if (type === 'click' || type === 'keydown') counts[type as 'click' | 'keydown'] += 1;
+      return doc.call(this, type, listener, options);
+    };
+    Window.prototype.addEventListener = function (
+      type: string,
+      listener: EventListenerOrEventListenerObject,
+      options?: boolean | AddEventListenerOptions,
+    ) {
+      if (type === 'hashchange') counts.hashchange += 1;
+      return win.call(this, type, listener, options);
+    };
+    (window as Window & { __listenerAdds?: typeof counts }).__listenerAdds = counts;
+  });
   await page.goto('/easypic/?album=1#panel');
   await expect(page.getByRole('heading', { name: '让照片呈现你想要的质感' })).toBeVisible();
   await page.evaluate(() => { (window as Window & { __easypicDoc?: number }).__easypicDoc = 1; });
@@ -209,22 +233,39 @@ test('keeps the photo and edits across topbar language changes', async ({ page }
   await compare.press('ArrowLeft');
   await expect(compare).toHaveAttribute('aria-valuenow', '48');
   await page.getByRole('button', { name: '导出' }).click();
-  await page.getByRole('radio', { name: 'JPG' }).click();
+  const firstDownload = page.waitForEvent('download');
+  await page.getByRole('button', { name: '导出照片' }).click();
+  const before = await firstDownload;
+  expect(before.suggestedFilename()).toBe('photo-easypic.png');
+  const beforePath = await before.path();
+  if (!beforePath) throw new Error('Download has no local path');
+  const beforeBytes = await readFile(beforePath);
 
-  await page.locator('a.rf-lang').evaluate((link) => {
-    link.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+  const shellRequests = () => requests.filter((request) => request.url().includes('/shell/topbar.js')).length;
+  const shellBefore = shellRequests();
+  const listenersBefore = await page.evaluate(() => {
+    const counts = (window as Window & { __listenerAdds?: { click: number; keydown: number; hashchange: number } }).__listenerAdds;
+    return counts ? { ...counts } : null;
   });
+  const barBefore = await page.evaluate(() => (window as Window & { __rfBar?: number }).__rfBar);
+  const toggle = page.locator('a.rf-lang');
+  await toggle.focus();
+  await page.keyboard.press('Enter');
   await expect(page).toHaveURL(/\/easypic\/en\/\?album=1#panel$/);
-  await expect(page.getByRole('button', { name: 'Tools' })).toBeVisible();
+  await expect(toggle).toBeFocused();
   expect(await page.evaluate(() => (window as Window & { __easypicDoc?: number }).__easypicDoc)).toBe(1);
-  await expect(page.locator('#active-filter-title')).toHaveText('柔光');
-  await expect(page.locator('.editor-controls')).toContainText('99%');
-  const englishCompare = page.locator('[role="slider"][aria-label="Compare original and filter"]');
+  expect(await page.evaluate(() => (window as Window & { __rfBar?: number }).__rfBar)).toBe(barBefore);
+  expect(shellRequests()).toBe(shellBefore);
+  expect(await page.evaluate(() => {
+    const counts = (window as Window & { __listenerAdds?: { click: number; keydown: number; hashchange: number } }).__listenerAdds;
+    return counts ? { ...counts } : null;
+  })).toEqual(listenersBefore);
+  await expect(page.getByRole('heading', { name: '柔光' })).toBeVisible();
+  await expect(page.getByText('99%')).toBeVisible();
+  const englishCompare = page.getByRole('slider', { name: 'Compare original and filter' });
   await expect(englishCompare).toHaveAttribute('aria-valuenow', '48');
   await expect(englishCompare).toHaveAttribute('aria-valuetext', 'Original 48%');
   await expect(page.locator('#compare-keys')).toHaveText('Use the arrow keys to move the divider. Home and End jump to either end.');
-  await expect(page.getByRole('dialog', { name: 'Export photo' })).toBeVisible();
-  await expect(page.getByRole('radio', { name: 'JPG' })).toBeChecked();
   await expect(page.locator('html')).toHaveAttribute('lang', 'en');
   await expect(page.locator('link[rel="canonical"]')).toHaveAttribute('href', 'https://rende.fun/easypic/en/');
   await expect(page.locator('link[hreflang="x-default"]')).toHaveAttribute('href', 'https://rende.fun/easypic/en/');
@@ -232,42 +273,38 @@ test('keeps the photo and edits across topbar language changes', async ({ page }
   const englishBody = await page.locator('body').innerText();
   expect(englishBody).not.toContain('滤镜强度');
   expect(englishBody).toContain('柔光');
+
+  await page.getByRole('button', { name: 'Export' }).click();
+  await expect(page.getByRole('dialog', { name: 'Export photo' })).toBeVisible();
   await saveShot(page, 'desktop-en-export');
-  const downloadPromise = page.waitForEvent('download');
+  const secondDownload = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Export photo' }).click();
-  const download = await downloadPromise;
-  expect(download.suggestedFilename()).toBe('photo-easypic.jpg');
+  const after = await secondDownload;
+  expect(after.suggestedFilename()).toBe('photo-easypic.png');
+  const afterPath = await after.path();
+  if (!afterPath) throw new Error('Download has no local path');
+  expect(await readFile(afterPath)).toEqual(beforeBytes);
   expect(requests.some((request) => request.url().includes('/easypic/en/api/'))).toBe(false);
   expect(requests.some((request) => request.postData()?.includes('photo'))).toBe(false);
   await saveShot(page, 'desktop-en-retained');
 
-  await page.getByRole('link', { name: '中文' }).click();
-  await expect(page).toHaveURL(/\/easypic\/\?album=1&lang=zh#panel$/);
-  await expect(page.getByRole('button', { name: '工具' })).toBeVisible();
+  await page.goBack();
+  await expect(page).toHaveURL(/\/easypic\/\?album=1#panel$/);
   await expect(page.getByRole('heading', { name: '柔光' })).toBeVisible();
   await expect(page.getByText('99%')).toBeVisible();
   await expect(page.getByRole('slider', { name: '原图与滤镜对比' })).toHaveAttribute('aria-valuenow', '48');
   expect(await page.evaluate(() => (window as Window & { __easypicDoc?: number }).__easypicDoc)).toBe(1);
-  expect(await page.evaluate(() => localStorage.getItem('rf-lang'))).toBe('zh');
-
-  await page.goBack();
-  await expect(page).toHaveURL(/\/easypic\/en\/\?album=1#panel$/);
-  await expect(page.getByRole('button', { name: 'Tools' })).toBeVisible();
-  await expect(page.locator('a.rf-lang')).toHaveAttribute('href', /\/easypic\/\?album=1&lang=zh#panel$/);
-  await expect(page.getByRole('heading', { name: '柔光' })).toBeVisible();
-  await expect(page.getByText('99%')).toBeVisible();
-  expect(await page.evaluate(() => (window as Window & { __easypicDoc?: number }).__easypicDoc)).toBe(1);
-  expect(await page.evaluate(() => localStorage.getItem('rf-lang'))).toBe('zh');
+  expect(await page.evaluate(() => localStorage.getItem('rf-lang'))).toBe('en');
+  expect(shellRequests()).toBe(shellBefore);
 
   await page.goForward();
-  await expect(page).toHaveURL(/\/easypic\/\?album=1&lang=zh#panel$/);
-  await expect(page.getByRole('button', { name: '工具' })).toBeVisible();
-  await expect(page.locator('a.rf-lang')).toHaveAttribute('href', /\/easypic\/en\/\?album=1#panel$/);
+  await expect(page).toHaveURL(/\/easypic\/en\/\?album=1#panel$/);
   await expect(page.getByRole('heading', { name: '柔光' })).toBeVisible();
   await expect(page.getByText('99%')).toBeVisible();
-  await expect(page.getByRole('slider', { name: '原图与滤镜对比' })).toHaveAttribute('aria-valuenow', '48');
+  await expect(page.getByRole('slider', { name: 'Compare original and filter' })).toHaveAttribute('aria-valuenow', '48');
   expect(await page.evaluate(() => (window as Window & { __easypicDoc?: number }).__easypicDoc)).toBe(1);
-  expect(await page.evaluate(() => localStorage.getItem('rf-lang'))).toBe('zh');
+  expect(await page.evaluate(() => localStorage.getItem('rf-lang'))).toBe('en');
+  expect(shellRequests()).toBe(shellBefore);
 
   await page.goto('/easypic/en/#error');
   await page.getByLabel('Choose a photo').setInputFiles({

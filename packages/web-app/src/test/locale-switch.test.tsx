@@ -107,6 +107,11 @@ describe('in-memory language switch', () => {
     expect(screen.getByRole('dialog', { name: '导出照片' })).toBeInTheDocument();
     expect(screen.getByRole('radio', { name: 'JPG' })).toBeChecked();
     expect(screen.getByRole('slider', { name: '原图与滤镜对比', hidden: true })).toHaveAttribute('aria-valuenow', '48');
+
+    await user.click(screen.getByRole('button', { name: '取消' }));
+    await user.click(screen.getByRole('button', { name: '导出' }));
+    expect(screen.getByRole('radio', { name: 'PNG' })).toBeChecked();
+    expect(screen.getByRole('radio', { name: 'JPG' })).not.toBeChecked();
   });
 
   it('translates a validation error that is already on screen', () => {

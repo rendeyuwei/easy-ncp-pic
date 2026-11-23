@@ -19,6 +19,7 @@ export interface EnterDecision {
 
 export interface LocaleUrls {
   readonly prefix: string;
+  readonly mount: string;
   readonly zh: string;
   readonly en: string;
 }
@@ -199,6 +200,7 @@ export function localeUrls(value: string | undefined, origin = PUBLIC_ORIGIN): L
   const prefix = prefixFromDeployValue(value);
   return {
     prefix,
+    mount: prefix ? `${prefix}/` : '/',
     zh: `${origin}${prefix}/`,
     en: `${origin}${prefix}/en/`,
   };
@@ -207,6 +209,7 @@ export function localeUrls(value: string | undefined, origin = PUBLIC_ORIGIN): L
 export function applyLocaleHtml(html: string, urls: LocaleUrls): string {
   return html
     .replaceAll('__EASYPIC_PREFIX__', urls.prefix)
+    .replaceAll('__EASYPIC_MOUNT__', urls.mount)
     .replaceAll('__EASYPIC_CANONICAL_ZH__', urls.zh)
     .replaceAll('__EASYPIC_CANONICAL_EN__', urls.en);
 }

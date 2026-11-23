@@ -7,6 +7,7 @@ import {
   languageToggleHref,
   plainActivation,
   sameAppLanguageHref,
+  shellRefreshesInPlace,
 } from '../lib/language-switch';
 
 describe('same-app language links', () => {
@@ -39,10 +40,20 @@ describe('same-app language links', () => {
     })).toBe(false);
   });
 
+  it('accepts v2 and newer shells and leaves v1 to the browser', () => {
+    expect(shellRefreshesInPlace(undefined)).toBe(false);
+    expect(shellRefreshesInPlace({ v: 1 })).toBe(false);
+    expect(shellRefreshesInPlace({ v: 2 })).toBe(true);
+    expect(shellRefreshesInPlace({ v: 3 })).toBe(true);
+  });
+
   it('persists the destination language and does not follow the link', async () => {
     const navigate = vi.fn().mockResolvedValue(undefined);
     const choose = vi.fn(() => true);
-    window.rfLang = { v: 1, leaving: false, enter() { return undefined; }, choose };
+    const push = vi.spyOn(window.history, 'pushState');
+    const locale = vi.fn();
+    document.addEventListener('rf:locale', locale);
+    window.rfLang = { v: 2, leaving: false, enter() { return undefined; }, choose };
     document.body.innerHTML = '<a class="rf-lang" href="/en/#stay">EN</a><a id="tool" href="#shutter">Tool</a>';
     const stop = installLanguageSwitch(navigate, '/');
     const link = document.querySelector('.rf-lang');
@@ -54,8 +65,29 @@ describe('same-app language links', () => {
     expect(seen).not.toHaveBeenCalled();
     expect(choose).toHaveBeenCalledWith('en');
     expect(navigate).toHaveBeenCalledWith('/en/#stay');
+    expect(locale).toHaveBeenCalledTimes(1);
+    expect(push).not.toHaveBeenCalled();
     document.getElementById('tool')?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
     expect(navigate).toHaveBeenCalledTimes(1);
+    expect(choose).toHaveBeenCalledTimes(1);
+    push.mockRestore();
+    document.removeEventListener('rf:locale', locale);
+    stop();
+    delete window.rfLang;
+  });
+
+  it('does not intercept a v1 shell', async () => {
+    const navigate = vi.fn().mockResolvedValue(undefined);
+    const choose = vi.fn(() => true);
+    window.rfLang = { v: 1, leaving: false, enter() { return undefined; }, choose };
+    document.body.innerHTML = '<a class="rf-lang" href="/en/">EN</a>';
+    const stop = installLanguageSwitch(navigate, '/');
+    const click = new MouseEvent('click', { bubbles: true, cancelable: true });
+    document.querySelector('a')?.dispatchEvent(click);
+    await Promise.resolve();
+    expect(click.defaultPrevented).toBe(false);
+    expect(navigate).not.toHaveBeenCalled();
+    expect(choose).not.toHaveBeenCalled();
     stop();
     delete window.rfLang;
   });
@@ -63,7 +95,7 @@ describe('same-app language links', () => {
   it('leaves the tools-menu EasyPic link as a normal navigation', async () => {
     const navigate = vi.fn().mockResolvedValue(undefined);
     const choose = vi.fn(() => true);
-    window.rfLang = { v: 1, leaving: false, enter() { return undefined; }, choose };
+    window.rfLang = { v: 2, leaving: false, enter() { return undefined; }, choose };
     window.history.pushState(null, '', '/easypic/en/?album=1#panel');
     document.body.innerHTML = '<a href="/easypic/">EasyPic</a>';
     const stop = installLanguageSwitch(navigate, '/easypic/');
@@ -82,7 +114,7 @@ describe('same-app language links', () => {
       window.history.pushState(null, '', '/en/#stay');
     });
     const assign = vi.fn();
-    window.rfLang = { v: 1, leaving: false, enter() { return undefined; }, choose: () => true };
+    window.rfLang = { v: 2, leaving: false, enter() { return undefined; }, choose: () => true };
     window.history.pushState(null, '', '/');
     document.body.innerHTML = '<a class="rf-lang" href="/en/#stay">EN</a>';
     const stop = installLanguageSwitch(navigate, '/', assign);
@@ -98,7 +130,7 @@ describe('same-app language links', () => {
   it('does not intercept a stale toggle that still points at the current language', async () => {
     const navigate = vi.fn().mockResolvedValue(undefined);
     const choose = vi.fn(() => true);
-    window.rfLang = { v: 1, leaving: false, enter() { return undefined; }, choose };
+    window.rfLang = { v: 2, leaving: false, enter() { return undefined; }, choose };
     window.history.pushState(null, '', '/');
     document.body.innerHTML = '<a class="rf-lang" href="/en/#stay">EN</a>';
     const stop = installLanguageSwitch(navigate, '/');
@@ -117,7 +149,7 @@ describe('same-app language links', () => {
 
   it('does not write the language preference on back or forward', () => {
     const choose = vi.fn(() => true);
-    window.rfLang = { v: 1, leaving: false, enter() { return undefined; }, choose };
+    window.rfLang = { v: 2, leaving: false, enter() { return undefined; }, choose };
     window.__rfBar = 1;
     document.body.innerHTML = '<header class="rf-bar" lang="zh-CN"><a class="rf-lang" href="/en/">EN</a></header>';
     const current = document.createElement('script');
@@ -137,7 +169,7 @@ describe('same-app language links', () => {
   it('still switches when preference storage throws', async () => {
     const navigate = vi.fn().mockResolvedValue(undefined);
     window.rfLang = {
-      v: 1,
+      v: 2,
       leaving: false,
       enter() { return undefined; },
       choose() {
@@ -182,7 +214,7 @@ describe('shared shell stays untouched', () => {
     const seen: string[] = [];
     const choose = vi.fn(() => true);
     window.rfLang = new Proxy({
-      v: 1,
+      v: 2,
       leaving: false,
       enter() { return undefined; },
       choose,
@@ -227,7 +259,7 @@ describe('shared shell stays untouched', () => {
     expect(added.hashchange).toBe(0);
     expect(window.__rfBar).toBe(1);
     expect(document.querySelectorAll('script[src*="/shell/topbar.js"]')).toHaveLength(1);
-    expect(seen.filter((name) => name !== 'choose')).toEqual([]);
+    expect(seen.filter((name) => name !== 'choose' && name !== 'v')).toEqual([]);
     stop();
   });
 
@@ -247,7 +279,7 @@ describe('shared shell stays untouched', () => {
     const navigate = vi.fn().mockResolvedValue(undefined);
     const assign = vi.fn();
     const choose = vi.fn(() => true);
-    window.rfLang = { v: 1, leaving: false, enter() { return undefined; }, choose };
+    window.rfLang = { v: 2, leaving: false, enter() { return undefined; }, choose };
     window.__rfBar = 1;
     document.body.innerHTML = '<a class="rf-lang" href="/en/pics/en/?album=1#panel">EN</a>';
     const link = document.querySelector('a');
@@ -269,5 +301,4 @@ describe('shared shell stays untouched', () => {
     stop();
   });
 
-  it.todo('calls the published optional shell mount without adding listeners or fetching topbar.js');
 });

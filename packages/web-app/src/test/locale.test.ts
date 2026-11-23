@@ -103,11 +103,13 @@ describe('locale place and routing', () => {
   it('builds canonicals from the deploy prefix without putting language into the asset base', () => {
     expect(localeUrls('easypic')).toEqual({
       prefix: '/easypic',
+      mount: '/easypic/',
       zh: 'https://rende.fun/easypic/',
       en: 'https://rende.fun/easypic/en/',
     });
     expect(localeUrls(undefined)).toEqual({
       prefix: '',
+      mount: '/',
       zh: 'https://rende.fun/',
       en: 'https://rende.fun/en/',
     });

@@ -95,11 +95,9 @@ interface EnterDecision {
 
 照片、已选滤镜、强度、对比位置、打开中的导出格式和进行中的导出任务留在布局组件里，不重新跑导出。已出现的错误按稳定 code 用当前语言重画。照片字节不写入 storage，也不发到新的服务。
 
-当前主站顶栏（rende-site `64701ced`）在启动时用 `place(location.pathname)` 定死 `lang` 和 `other`。按钮文案、`bar.lang`、工具菜单和 `siteHref` 都不再读地址。`hashchange` 和点击只把切换链接重写成 `href(other)`，`other` 仍是启动时的那一个。`pushState` 不触发 `hashchange`，`popstate` 也没有监听。因此同页换成另一种语言后，顶栏的文字和链接都还是旧的：再点一次不会切回去，而是对启动时的 `other` 再执行 `choose`，并走向那个旧链接。前进和后退同样不改顶栏，也不该写 `rf-lang`。
+主站壳 `2edd7d4`（实现 `09687c3`）把 `rfLang.v` 升到 2。页面先用路由改一次地址并写好 html lang，再调用现有的 `rfLang.choose(lang)`，然后派发 `rf:locale`。不再 `history.pushState` 一次。壳在同一根节点上重画文字、链接和菜单，并把焦点放回切换链接。壳自己的 `popstate` 只重画，不写 `rf-lang`。`v < 2` 的旧壳不拦截，仍整页打开。不重放脚本，不删除 `__rfBar`，不改 `rfLang` 的方法。
 
-重放 `topbar.js` 已停用。每重放一次都会再挂上 document 的 click、keydown 和 window 的 hashchange，删除共享的 `window.__rfBar`，语言链接被拆掉后面焦点落到 body，并再请求一次脚本。正式的同文档刷新和可选挂载还没公布。本仓库不猜测函数名，不给 `rfLang` 加方法，也不改它的现有方法。约定到达前，同页切换不替换顶栏节点。
-
-共享 `place()` 只认识登记过的站点。`/pics/en/` 会被当成主站中文，切换链接变成 `/en/pics/en/`，跟着走会离开应用并丢掉照片。`a.rf-lang` 的目标如果离开部署前缀，就改走本应用算出的对应地址，仍调用现有的 `choose`。顶栏上的文字和 href 本身要等主站约定，切换按钮保持可见。
+`<meta name="rf-mount">` 写实际部署前缀，生产是 `/easypic/`，根部署是 `/`。顶栏脚本保持 `data-tool="easypic"`。登记表 `en` 仍为 false。自定义 `/pics/` 由这份 meta 和 `data-tool` 识别；切换链接若仍离开部署前缀，就改走站内对应地址。
 
 现有百度统计片段保留，不新增遥测。被启动脚本跳走的中文页不发统计。同页切换不标记 `leaving`。
 

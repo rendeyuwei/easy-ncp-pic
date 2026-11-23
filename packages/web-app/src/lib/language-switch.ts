@@ -52,17 +52,16 @@ export function installLanguageSwitch(
     if (!plainActivation(event)) return;
     const link = anchorFromEvent(event);
     if (!link || !link.classList.contains('rf-lang') || link.target === '_blank' || link.hasAttribute('download')) return;
+    if (!shellRefreshesInPlace(window.rfLang)) return;
     const href = languageToggleHref(location.href, link.href, prefix);
     if (!href) return;
     event.preventDefault();
     event.stopPropagation();
     const lang: AppLang = parsePlace(new URL(href, location.href).pathname, prefix).lang;
-    try {
-      window.rfLang?.choose?.(lang);
-    } catch {
-      // choose() already tolerates blocked storage; a thrown wrapper still should not block the switch.
-    }
-    void Promise.resolve(navigate(href)).catch(() => {
+    void Promise.resolve(navigate(href)).then(() => {
+      commitLocale(lang);
+    }).catch(() => {
+      commitLocale(lang);
       assign(href);
     });
   };
@@ -72,10 +71,23 @@ export function installLanguageSwitch(
   };
 }
 
-// The shared shell's place() only knows its own site list. On another prefix it
-// classifies the page as the home site and builds a URL such as /en/pics/en/.
-// Keep that click inside this app. Do not replay topbar.js or touch __rfBar;
-// the shared mount contract is not published yet.
+// v2 shells refresh the existing bar on "rf:locale" and on popstate.
+// Older shells keep their own full navigation. v === 1 is not the supported path.
+export function shellRefreshesInPlace(rf: { v?: number } | null | undefined): boolean {
+  return typeof rf?.v === 'number' && rf.v >= 2;
+}
+
+function commitLocale(lang: AppLang): void {
+  try {
+    window.rfLang?.choose?.(lang);
+  } catch {
+    // choose() already tolerates blocked storage; a thrown wrapper still should not block the switch.
+  }
+  document.dispatchEvent(new Event('rf:locale'));
+}
+
+// A v2 shell mounted at /pics/ links inside that prefix. If a toggle href still
+// leaves the deploy prefix, stay on the in-app sibling instead of unloading the photo.
 export function languageToggleHref(currentHref: string, targetHref: string, prefix: string): string | null {
   const sibling = sameAppLanguageHref(currentHref, targetHref, prefix);
   if (sibling) return sibling;

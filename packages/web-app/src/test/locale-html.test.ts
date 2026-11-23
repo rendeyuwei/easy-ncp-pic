@@ -20,6 +20,7 @@ describe('language entry html', () => {
     expect(zh).toContain('hreflang="x-default" href="__EASYPIC_CANONICAL_EN__"');
     expect(zh).toContain('<script src="/shell/lang.js"');
     expect(zh).toContain('<script data-easypic-boot></script>');
+    expect(zh).toContain('name="rf-mount" content="__EASYPIC_MOUNT__"');
     expect(zh).toContain('data-tool="easypic"');
     expect(zh).not.toContain('data-home');
 
@@ -29,6 +30,7 @@ describe('language entry html', () => {
     expect(en).toContain('rel="canonical" href="__EASYPIC_CANONICAL_EN__"');
     expect(en).not.toContain('data-easypic-boot');
     expect(en).not.toContain(messages.zh.description);
+    expect(en).toContain('name="rf-mount" content="__EASYPIC_MOUNT__"');
     expect(en).toContain('data-tool="easypic"');
     expect(en).not.toContain('data-home');
   });

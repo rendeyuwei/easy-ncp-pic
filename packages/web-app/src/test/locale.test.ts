@@ -17,6 +17,7 @@ import {
   parsePlace,
   prefixFromDeployValue,
   readManualPref,
+  pageLangFromRoute,
   routerBasepath,
   type AppLang,
 } from '../lib/locale';
@@ -90,9 +91,11 @@ describe('locale place and routing', () => {
     expect(parsePlace('/easypic', '/easypic')).toEqual({ prefix: '/easypic', lang: 'zh', rest: '' });
     expect(parsePlace('/preview/en/', '/preview').lang).toBe('en');
     expect(parsePlace('/other/en/', '/preview').lang).toBe('zh');
-    expect(routerBasepath('/easypic/en/', '/easypic/')).toBe('/easypic/en');
+    expect(routerBasepath('/easypic/en/', '/easypic/')).toBe('/easypic');
     expect(routerBasepath('/easypic/?lang=zh', '/easypic/')).toBe('/easypic');
-    expect(routerBasepath('/en/', '/')).toBe('/en');
+    expect(routerBasepath('/en/', '/')).toBe('/');
+    expect(pageLangFromRoute('/en/')).toBe('en');
+    expect(pageLangFromRoute('/')).toBe('zh');
     expect(pageLang('/easypic/en/', '?lang=zh', '/easypic')).toBe('en');
     expect(pageLang('/easypic/', '?lang=en', '/easypic')).toBe('zh');
   });

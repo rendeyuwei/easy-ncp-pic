@@ -6,28 +6,55 @@ import {
   type RouterHistory,
 } from '@tanstack/react-router';
 import { App } from './app';
-import { routerBasepath } from './lib/locale';
+import { deploymentBasepath } from './lib/locale';
+import { LocaleRouteSync } from './locale-context';
+
+function AppLayout() {
+  return (
+    <>
+      <LocaleRouteSync />
+      <App />
+      <Outlet />
+    </>
+  );
+}
 
 const rootRoute = createRootRoute({
   component: Outlet,
 });
 
-const indexRoute = createRoute({
+const appRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/',
-  component: App,
+  id: 'app',
+  component: AppLayout,
 });
 
-const routeTree = rootRoute.addChildren([indexRoute]);
+const chineseRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: '/',
+  component: () => null,
+});
+
+const englishRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: '/en',
+  component: () => null,
+});
+
+const routeTree = rootRoute.addChildren([
+  appRoute.addChildren([chineseRoute, englishRoute]),
+]);
 
 export function createWebRouter(
   history?: RouterHistory,
-  basepath = routerBasepath(
-    typeof window === 'undefined' ? '/' : window.location.pathname,
-    import.meta.env.BASE_URL,
-  ),
+  basepath = deploymentBasepath(import.meta.env.BASE_URL),
 ) {
-  return createRouter({ routeTree, basepath, history });
+  return createRouter({
+    routeTree,
+    basepath,
+    history,
+    trailingSlash: 'preserve',
+  });
 }
 
 export const router = createWebRouter();

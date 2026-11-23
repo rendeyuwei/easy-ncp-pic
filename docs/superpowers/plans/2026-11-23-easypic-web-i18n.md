@@ -31,7 +31,7 @@
 - 存储 `getItem` / `cookie` 抛错时 `readManualPref` 返回 `null`
 - 与夹具脚本在 `/easypic` 上的 `place`、`match`、`pref`、`href`、`enter` 结果一致
 - `bootLocale`：前缀 `/easypic` 且存在 `rfLang.enter` 时只调用它；前缀 `/preview` 时不调用它，而是 `replace('/preview/en/...')`
-- `routerBasepath('/easypic/en/', '/easypic/')` 为 `/easypic/en`；`pageLang` 在英文路径上忽略 `?lang=zh`
+- `routerBasepath('/easypic/en/', '/easypic/')` 为 `/easypic`（语言是路由，不是 base）；`pageLang` 在英文路径上忽略 `?lang=zh`
 - `localeUrls('easypic')` 得到 `https://rende.fun/easypic/` 与 `https://rende.fun/easypic/en/`
 - `localeBootSource()` 可在 vm 里执行，并且不包含 `</script`
 
@@ -93,3 +93,7 @@ pnpm --filter @easypic/web-app test:e2e:locale
 ```
 
 现有 `test:e2e` 仍走 Vite 开发服务器。`test:e2e:locale` 走上面的生产构建和本地新顶栏。
+
+## 同页切换
+
+普通点击由 `packages/web-app/src/lib/language-switch.ts` 接到 `router.navigate`。布局在 `packages/web-app/src/router.tsx` 的 `app` 路由，中文 `/`、英文 `/en`。回归：`src/test/language-switch.test.ts`、`src/test/locale-switch.test.tsx`，以及 `e2e/locale.spec.ts` 里带滤镜、强度、对比位置和导出格式的 zh→en→zh、后退和前进。顶栏正式刷新约定未到之前，预览只重放现有 `topbar.js`，不新增 `rfLang` 方法。

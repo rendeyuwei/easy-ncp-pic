@@ -1,5 +1,6 @@
 import { useRef, useState, type DragEvent, type KeyboardEvent } from 'react';
 import { ImagePlus, LockKeyhole } from 'lucide-react';
+import type { AppErrorCode } from '../lib/app-error';
 import { fill } from '../lib/messages';
 import { useMessages } from '../locale-context';
 
@@ -28,20 +29,21 @@ export function UploadScreen({
   const inputRef = useRef<HTMLInputElement>(null);
   const dragDepth = useRef(0);
   const [dragging, setDragging] = useState(false);
-  const [validationError, setValidationError] = useState<string | null>(null);
+  const [validationCode, setValidationCode] = useState<AppErrorCode | null>(null);
+  const validationError = validationCode ? copy.errors[validationCode] : null;
 
   const acceptFiles = (files: FileList | ReadonlyArray<File>): void => {
     if (busy) return;
     if (files.length !== 1) {
-      setValidationError(copy.errors['file-count']);
+      setValidationCode('file-count');
       return;
     }
     const file = files[0];
     if (!file || !isSupported(file)) {
-      setValidationError(copy.errors['file-type']);
+      setValidationCode('file-type');
       return;
     }
-    setValidationError(null);
+    setValidationCode(null);
     onFile(file);
   };
 

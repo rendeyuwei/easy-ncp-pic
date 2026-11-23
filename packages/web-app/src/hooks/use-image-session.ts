@@ -10,7 +10,7 @@ import {
   type WorkerLoadedImage,
 } from '@easypic/image-engine';
 import { useLang } from '../locale-context';
-import { AppError, codeForEngineMessage } from '../lib/app-error';
+import { AppError, codeForEngineMessage, type AppErrorCode } from '../lib/app-error';
 import { toFilterParams, type PublicFilter } from '../lib/filters';
 import { messages, type Messages } from '../lib/messages';
 
@@ -62,7 +62,7 @@ interface OperationStatus {
   readonly sequence: number;
   readonly progress: number;
   readonly stage: string | null;
-  readonly error: string | null;
+  readonly error: AppErrorCode | null;
 }
 
 type OperationStatuses = Record<OperationName, OperationStatus>;
@@ -120,10 +120,10 @@ async function readFileBytes(file: File): Promise<Uint8Array> {
   });
 }
 
-function messageFor(error: unknown, phase: 'load' | 'render' | 'export', copy: Messages): string {
-  if (error instanceof AppError) return error.message;
+function failureCode(error: unknown, phase: 'load' | 'render' | 'export'): AppErrorCode {
+  if (error instanceof AppError) return error.code;
   const message = error instanceof Error ? error.message : String(error);
-  return copy.errors[codeForEngineMessage(message, phase)];
+  return codeForEngineMessage(message, phase);
 }
 
 export function useImageSession(
@@ -133,12 +133,12 @@ export function useImageSession(
   const lang = useLang();
   const copyRef = useRef(messages[lang]);
   copyRef.current = messages[lang];
-  const [fallbackNotice, setFallbackNotice] = useState<string | null>(null);
+  const [fallbackCode, setFallbackCode] = useState<AppErrorCode | null>(null);
   const engineRef = useRef<WorkerEngine | null>(null);
   const engineFactoryRef = useRef(engineFactory);
   const getEngine = useCallback((): WorkerEngine => {
     if (!engineRef.current) engineRef.current = engineFactoryRef.current({
-      onFallback: () => setFallbackNotice(copyRef.current.errors['webgl-fallback']),
+      onFallback: () => setFallbackCode('webgl-fallback'),
     });
     return engineRef.current;
   }, []);
@@ -216,11 +216,11 @@ export function useImageSession(
     });
   }, []);
 
-  const setValidationError = useCallback((message: string | null): void => {
+  const setValidationError = useCallback((code: AppErrorCode | null): void => {
     const sequence = ++operationSequence.current;
     setOperations((current) => ({
       ...current,
-      validation: { ...idleOperation, sequence, error: message },
+      validation: { ...idleOperation, sequence, error: code },
     }));
   }, []);
 
@@ -280,7 +280,7 @@ export function useImageSession(
         }
         setPendingFilter(null);
         finishOperation('preview', request.token, {
-          error: preview ? null : messageFor(renderError, 'render', copyRef.current),
+          error: preview ? null : failureCode(renderError, 'render'),
         });
         request.resolve();
       }
@@ -412,7 +412,7 @@ export function useImageSession(
 
   const load = useCallback(async (file: File): Promise<void> => {
     if (!accepts(file)) {
-      setValidationError(copyRef.current.errors['file-type']);
+      setValidationError('file-type');
       return;
     }
     setValidationError(null);
@@ -431,7 +431,7 @@ export function useImageSession(
     let loaded: WorkerLoadedImage | null = null;
     let committed = false;
     let engine: WorkerEngine | null = null;
-    let loadErrorMessage: string | null = null;
+    let loadErrorCode: AppErrorCode | null = null;
     try {
       engine = getEngine();
       const bytes = await readFileBytes(file);
@@ -466,14 +466,14 @@ export function useImageSession(
       if (token === loadToken.current) {
         thumbnailImageId.current = imageRef.current?.id ?? null;
         enqueueThumbnails(latestThumbnailFilters.current);
-        loadErrorMessage = messageFor(loadError, 'load', copyRef.current);
+        loadErrorCode = failureCode(loadError, 'load');
       }
     } finally {
       if (loaded && !committed && engine) await engine.disposeImage(loaded).catch(() => undefined);
       if (token === loadToken.current) {
         activeLoadToken.current = null;
         finishOperation('load', token, {
-          error: loadErrorMessage,
+          error: loadErrorCode,
           ...(committed ? { progress: 1 } : {}),
         });
       }
@@ -519,7 +519,7 @@ export function useImageSession(
     physicalExportInFlight.current = true;
     activeExportToken.current = token;
     beginOperation('export', token);
-    let exportErrorMessage: string | null = null;
+    let exportErrorCode: AppErrorCode | null = null;
     try {
       return await engine.exportImage(
         activeImage,
@@ -530,13 +530,13 @@ export function useImageSession(
         } },
       );
     } catch (exportError) {
-      exportErrorMessage = messageFor(exportError, 'export', copyRef.current);
+      exportErrorCode = failureCode(exportError, 'export');
       throw exportError;
     } finally {
       physicalExportInFlight.current = false;
       if (token === exportToken.current) {
         activeExportToken.current = null;
-        finishOperation('export', token, { error: exportErrorMessage });
+        finishOperation('export', token, { error: exportErrorCode });
       }
     }
   }, [beginOperation, finishOperation, getEngine, updateOperationProgress]);
@@ -594,8 +594,8 @@ export function useImageSession(
     loading,
     previewing,
     exporting,
-    error: latestError?.error ?? null,
-    fallbackNotice,
+    error: latestError?.error ? messages[lang].errors[latestError.error] : null,
+    fallbackNotice: fallbackCode ? messages[lang].errors[fallbackCode] : null,
     load,
     selectFilter,
     requestThumbnails,

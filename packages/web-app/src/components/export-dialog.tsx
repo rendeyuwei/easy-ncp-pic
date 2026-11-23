@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ExportOptions } from '@easypic/image-engine';
 import { buildDownloadName, downloadBytes, type DownloadType } from '../lib/download';
 import { fill } from '../lib/messages';
@@ -39,26 +39,28 @@ export function ExportDialog({
   const copy = useMessages();
   const [type, setType] = useState<DownloadType>(sourceType);
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
   const exporting = busy || submitting;
+  const wasOpen = useRef(false);
 
   useEffect(() => {
-    if (open) {
+    if (open && !wasOpen.current) {
       setType(sourceType);
-      setError(null);
+      setFailed(false);
     }
+    wasOpen.current = open;
   }, [open, sourceType]);
 
   const exportPhoto = async (): Promise<void> => {
     setSubmitting(true);
-    setError(null);
+    setFailed(false);
     try {
       const quality = type === 'image/jpeg' ? 0.92 : undefined;
       const bytes = await onExport({ type, quality });
       downloadBytes(bytes, type, buildDownloadName(sourceName, type));
       onOpenChange(false);
     } catch {
-      setError(copy.errors['export-failed']);
+      setFailed(true);
     } finally {
       setSubmitting(false);
     }
@@ -109,7 +111,7 @@ export function ExportDialog({
             <progress value={progress} max={1} />
           </div>
         ) : null}
-        {error ? <p role="alert">{error}</p> : null}
+        {failed ? <p role="alert">{copy.errors['export-failed']}</p> : null}
 
         <DialogFooter>
           <Button variant="secondary" disabled={exporting} onClick={() => onOpenChange(false)}>{copy.cancel}</Button>

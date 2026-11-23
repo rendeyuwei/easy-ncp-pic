@@ -73,7 +73,7 @@ interface EnterDecision {
 - `packages/web-app/index.html`：`lang="zh-CN"`。
 - `packages/web-app/en/index.html`：`lang="en"`。
 - Vite 多页输入两者。`base` 仍是 `deploymentBase(EASYPIC_DEPLOY_PREFIX)`。
-- TanStack Router 的 `basepath` 用 `routerBasepath`。中文匹配 `/<prefix>/`，英文匹配 `/<prefix>/en`。应用内仍只有 `/` 这一条路由。
+- TanStack Router 的 `basepath` 只用部署前缀。中文路由是 `/`，英文路由是 `/en`，同一条无路径布局挂着编辑器，所以语言变化不会卸掉会话。
 - canonical 来自 `https://rende.fun` 加构建前缀。生产构建前缀是 `easypic`。根前缀的 canonical 会和主站冲突，那不是生产挂载方式。
 - 构建插件把 `__EASYPIC_PREFIX__`、`__EASYPIC_CANONICAL_ZH__`、`__EASYPIC_CANONICAL_EN__` 换掉，并把启动脚本内联进中文页。`preserveShellTopbarHtml` 继续把被 Vite 加上前缀的 `/shell/topbar.js` 和 `/shell/lang.js` 改回站点根。
 
@@ -91,9 +91,15 @@ interface EnterDecision {
 
 ## 6. 会话与隐私
 
-共享切换器是普通链接，会在两份 HTML 之间整页导航。打开中的照片、滤镜、强度和未完成的导出都在内存里，这次导航会丢掉。照片字节不写入 storage，也不发到新的服务。自动 `enter()` 在 React 挂载前执行，所以它不会清掉已经在正确语言页上开始的编辑。已下载的文件不受影响。
+普通左键点击同一挂载点下的对应语言链接（包括共享顶栏的 `a.rf-lang`）不整页加载。捕获阶段取消浏览器默认跳转，调用现有的 `rfLang.choose(lang)` 记下手动偏好，再用 TanStack history 把地址换成该链接的路径、query 和 hash。Ctrl、Meta、Shift、Alt、中键、`target="_blank"` 和 `download` 仍交给浏览器。返回和前进只改地址和界面语言，不写 `rf-lang`。直接打开或刷新仍由各自的静态 HTML 和启动脚本决定，英文页没有启动跳转，因此同页切换不会来回 `replace`。
 
-现有百度统计片段保留，不新增遥测。被跳走的中文页不发统计。
+照片、已选滤镜、强度、对比位置、打开中的导出格式和进行中的导出任务留在布局组件里，不重新跑导出。已出现的错误按稳定 code 用当前语言重画。照片字节不写入 storage，也不发到新的服务。
+
+当前主站顶栏（rende-site `64701ced`）在启动时用 `place(location.pathname)` 定死 `lang` 和 `other`。按钮文案、`bar.lang`、工具菜单和 `siteHref` 都不再读地址。`hashchange` 和点击只把切换链接重写成 `href(other)`，`other` 仍是启动时的那一个。`pushState` 不触发 `hashchange`，`popstate` 也没有监听。因此同页换成另一种语言后，顶栏的文字和链接都还是旧的：再点一次不会切回去，而是对启动时的 `other` 再执行 `choose`，并走向那个旧链接。前进和后退同样不改顶栏，也不该写 `rf-lang`。
+
+主站作者会另加向后兼容的同文档刷新，以及可选的显式挂载。本仓库不猜测函数名，不给 `rfLang` 加方法，也不改它的现有方法。预览在语言不一致时暂时去掉 `.rf-bar`、清掉一次性的 `__rfBar`，再插入原来的 `/shell/topbar.js`，让现有脚本按当时的地址自己画一遍。这不是壳层接口。重插会留下旧的 document 监听；脚本还没画完时再同步一次会直接返回，等那次脚本执行时读的是当时的地址。收到主站的正式约定后，改为只调用那个约定，并停用重插。
+
+现有百度统计片段保留，不新增遥测。被启动脚本跳走的中文页不发统计。同页切换不标记 `leaving`。
 
 ## 7. 验收
 

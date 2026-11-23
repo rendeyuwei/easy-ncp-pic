@@ -190,6 +190,95 @@ async function openEditor(page: Page, english: boolean, file: 'photo.png' | 'pho
   await noHorizontalOverflow(page);
 }
 
+test('keeps the photo and edits across topbar language changes', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop');
+  const requests: Request[] = [];
+  await installApi(page, requests);
+  await setLanguages(page, ['zh-CN', 'en-US']);
+  await page.goto('/easypic/?album=1#panel');
+  await expect(page.getByRole('heading', { name: '让照片呈现你想要的质感' })).toBeVisible();
+  await page.evaluate(() => { (window as Window & { __easypicDoc?: number }).__easypicDoc = 1; });
+  await page.getByLabel('选择一张照片').setInputFiles('e2e/fixtures/photo.png');
+  await expect(page.getByRole('heading', { name: '选择一个滤镜' })).toBeVisible();
+  await page.getByRole('button', { name: /柔光/ }).click();
+  await expect(page.getByRole('heading', { name: '柔光' })).toBeVisible();
+  await page.getByRole('slider', { name: '滤镜强度' }).press('ArrowLeft');
+  await expect(page.getByText('99%')).toBeVisible();
+  const compare = page.getByRole('slider', { name: '原图与滤镜对比' });
+  await compare.focus();
+  await compare.press('ArrowLeft');
+  await expect(compare).toHaveAttribute('aria-valuenow', '48');
+  await page.getByRole('button', { name: '导出' }).click();
+  await page.getByRole('radio', { name: 'JPG' }).click();
+
+  await page.locator('a.rf-lang').evaluate((link) => {
+    link.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+  });
+  await expect(page).toHaveURL(/\/easypic\/en\/\?album=1#panel$/);
+  await expect(page.getByRole('button', { name: 'Tools' })).toBeVisible();
+  expect(await page.evaluate(() => (window as Window & { __easypicDoc?: number }).__easypicDoc)).toBe(1);
+  await expect(page.locator('#active-filter-title')).toHaveText('柔光');
+  await expect(page.locator('.editor-controls')).toContainText('99%');
+  const englishCompare = page.locator('[role="slider"][aria-label="Compare original and filter"]');
+  await expect(englishCompare).toHaveAttribute('aria-valuenow', '48');
+  await expect(englishCompare).toHaveAttribute('aria-valuetext', 'Original 48%');
+  await expect(page.locator('#compare-keys')).toHaveText('Use the arrow keys to move the divider. Home and End jump to either end.');
+  await expect(page.getByRole('dialog', { name: 'Export photo' })).toBeVisible();
+  await expect(page.getByRole('radio', { name: 'JPG' })).toBeChecked();
+  await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+  await expect(page.locator('link[rel="canonical"]')).toHaveAttribute('href', 'https://rende.fun/easypic/en/');
+  await expect(page.locator('link[hreflang="x-default"]')).toHaveAttribute('href', 'https://rende.fun/easypic/en/');
+  expect(await page.evaluate(() => localStorage.getItem('rf-lang'))).toBe('en');
+  const englishBody = await page.locator('body').innerText();
+  expect(englishBody).not.toContain('滤镜强度');
+  expect(englishBody).toContain('柔光');
+  await saveShot(page, 'desktop-en-export');
+  const downloadPromise = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Export photo' }).click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toBe('photo-easypic.jpg');
+  expect(requests.some((request) => request.url().includes('/easypic/en/api/'))).toBe(false);
+  expect(requests.some((request) => request.postData()?.includes('photo'))).toBe(false);
+  await saveShot(page, 'desktop-en-retained');
+
+  await page.getByRole('link', { name: '中文' }).click();
+  await expect(page).toHaveURL(/\/easypic\/\?album=1&lang=zh#panel$/);
+  await expect(page.getByRole('button', { name: '工具' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '柔光' })).toBeVisible();
+  await expect(page.getByText('99%')).toBeVisible();
+  await expect(page.getByRole('slider', { name: '原图与滤镜对比' })).toHaveAttribute('aria-valuenow', '48');
+  expect(await page.evaluate(() => (window as Window & { __easypicDoc?: number }).__easypicDoc)).toBe(1);
+  expect(await page.evaluate(() => localStorage.getItem('rf-lang'))).toBe('zh');
+
+  await page.goBack();
+  await expect(page).toHaveURL(/\/easypic\/en\/\?album=1#panel$/);
+  await expect(page.getByRole('button', { name: 'Tools' })).toBeVisible();
+  await expect(page.locator('a.rf-lang')).toHaveAttribute('href', /\/easypic\/\?album=1&lang=zh#panel$/);
+  await expect(page.getByRole('heading', { name: '柔光' })).toBeVisible();
+  await expect(page.getByText('99%')).toBeVisible();
+  expect(await page.evaluate(() => (window as Window & { __easypicDoc?: number }).__easypicDoc)).toBe(1);
+  expect(await page.evaluate(() => localStorage.getItem('rf-lang'))).toBe('zh');
+
+  await page.goForward();
+  await expect(page).toHaveURL(/\/easypic\/\?album=1&lang=zh#panel$/);
+  await expect(page.getByRole('button', { name: '工具' })).toBeVisible();
+  await expect(page.locator('a.rf-lang')).toHaveAttribute('href', /\/easypic\/en\/\?album=1#panel$/);
+  await expect(page.getByRole('heading', { name: '柔光' })).toBeVisible();
+  await expect(page.getByText('99%')).toBeVisible();
+  await expect(page.getByRole('slider', { name: '原图与滤镜对比' })).toHaveAttribute('aria-valuenow', '48');
+  expect(await page.evaluate(() => (window as Window & { __easypicDoc?: number }).__easypicDoc)).toBe(1);
+  expect(await page.evaluate(() => localStorage.getItem('rf-lang'))).toBe('zh');
+
+  await page.goto('/easypic/en/#error');
+  await page.getByLabel('Choose a photo').setInputFiles({
+    name: 'notes.txt',
+    mimeType: 'text/plain',
+    buffer: Buffer.from('not a photo'),
+  });
+  await expect(page.getByRole('alert')).toHaveText('Choose a JPG or PNG photo.');
+  await saveShot(page, 'desktop-en-error');
+});
+
 test.describe('both locales can edit and do not overflow', () => {
   test('edits and exports a Chinese page', async ({ page }, testInfo) => {
     const requests: Request[] = [];

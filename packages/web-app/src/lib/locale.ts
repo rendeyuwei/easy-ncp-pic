@@ -165,10 +165,18 @@ export function bootLocale(deps: BootDeps): void {
   deps.replace(decision.redirectTo);
 }
 
+export function deploymentBasepath(baseUrl: string | undefined): string {
+  return normalizePrefix(baseUrl) || '/';
+}
+
 export function routerBasepath(pathname: string, baseUrl: string | undefined): string {
-  const place = parsePlace(pathname, baseUrl);
-  if (place.lang === 'en') return place.prefix ? `${place.prefix}/en` : '/en';
-  return place.prefix || '/';
+  void pathname;
+  return deploymentBasepath(baseUrl);
+}
+
+export function pageLangFromRoute(pathname: string): AppLang {
+  const path = pathname.startsWith('/') ? pathname : `/${pathname}`;
+  return path === '/en' || path.startsWith('/en/') ? 'en' : 'zh';
 }
 
 export function pageLang(pathname: string, _search: string, prefix: string | undefined): AppLang {

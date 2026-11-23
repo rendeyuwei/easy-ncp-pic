@@ -88,6 +88,7 @@ describe('App editor integration', () => {
     expect(state.selectFilter).toHaveBeenCalledWith(selectedFilter);
 
     const intensity = screen.getByRole('slider', { name: '滤镜强度' });
+    expect(intensity).toHaveAttribute('aria-valuetext', '100%');
     intensity.focus();
     await user.keyboard('{ArrowLeft}');
     expect(state.setIntensity).toHaveBeenCalledWith(0.99);

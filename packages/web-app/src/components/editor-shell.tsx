@@ -2,8 +2,10 @@ import { useState } from 'react';
 import { Moon, Sun } from 'lucide-react';
 import type { ImageSessionState } from '../hooks/use-image-session';
 import type { Theme } from '../hooks/use-theme';
-import { webPath } from '../lib/deployment-paths';
+import { appHomeHref, readBrowserPref } from '../lib/locale';
+import { fill } from '../lib/messages';
 import type { PublicCategory } from '../lib/filters';
+import { useMessages } from '../locale-context';
 import { EditorControls } from './editor-controls';
 import { ExportDialog } from './export-dialog';
 import { FilterBrowser } from './filter-browser';
@@ -33,25 +35,32 @@ export function EditorShell({
   theme,
   onToggleTheme,
 }: EditorShellProps) {
+  const copy = useMessages();
   const [showOriginal, setShowOriginal] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [replaceOpen, setReplaceOpen] = useState(false);
   const image = session.image;
+  const homeHref = appHomeHref(
+    window.location.pathname,
+    window.location.search,
+    import.meta.env.BASE_URL,
+    readBrowserPref(),
+  );
 
   if (!image || !session.originalPreview || !session.filteredPreview) return null;
 
   return (
     <div className="app-shell">
       <header className="app-header">
-        <a className="wordmark" href={webPath('')} aria-label="EasyPic 首页">
+        <a className="wordmark" href={homeHref} aria-label={copy.homeAria}>
           <span aria-hidden="true">EP</span>EasyPic
         </a>
         <div className="header-actions">
-          <span className="privacy-pill">照片仅在本机处理</span>
+          <span className="privacy-pill">{copy.privacyPill}</span>
           <Button
             variant="ghost"
             size="icon"
-            aria-label={theme === 'dark' ? '切换到浅色主题' : '切换到深色主题'}
+            aria-label={theme === 'dark' ? copy.themeToLight : copy.themeToDark}
             onClick={onToggleTheme}
           >
             {theme === 'dark' ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
@@ -63,8 +72,8 @@ export function EditorShell({
         <section className="preview-panel" aria-labelledby="active-filter-title">
           <div className="preview-heading">
             <div>
-              <p className="eyebrow">当前效果</p>
-              <h1 id="active-filter-title">{session.selectedFilter?.displayName ?? '选择一个滤镜'}</h1>
+              <p className="eyebrow">{copy.currentLook}</p>
+              <h1 id="active-filter-title">{session.selectedFilter?.displayName ?? copy.chooseFilter}</h1>
             </div>
             <span>{image.width} × {image.height}</span>
           </div>
@@ -91,11 +100,11 @@ export function EditorShell({
           />
 
           <div className="editor-notices" aria-live="polite">
-            {filtersUnavailable ? <p>滤镜列表暂时无法更新，请稍后重试。</p> : null}
+            {filtersUnavailable ? <p>{copy.errors['filters-stale']}</p> : null}
             {session.fallbackNotice ? <p>{session.fallbackNotice}</p> : null}
             {session.error ? <p role="alert">{session.error}</p> : null}
-            {session.pendingFilter ? <p role="status">正在应用 {session.pendingFilter.displayName}…</p> : null}
-            {session.busy && !exportOpen ? <p role="status">正在处理照片…</p> : null}
+            {session.pendingFilter ? <p role="status">{fill(copy.applying, { name: session.pendingFilter.displayName })}</p> : null}
+            {session.busy && !exportOpen ? <p role="status">{copy.processing}</p> : null}
           </div>
         </section>
 
@@ -127,18 +136,18 @@ export function EditorShell({
       <Dialog open={replaceOpen} onOpenChange={setReplaceOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>更换照片？</DialogTitle>
-            <DialogDescription>当前滤镜和强度设置会被清除。</DialogDescription>
+            <DialogTitle>{copy.replaceTitle}</DialogTitle>
+            <DialogDescription>{copy.replaceDescription}</DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="secondary" onClick={() => setReplaceOpen(false)}>继续编辑</Button>
+            <Button variant="secondary" onClick={() => setReplaceOpen(false)}>{copy.keepEditing}</Button>
             <Button
               onClick={() => {
                 setReplaceOpen(false);
                 void session.reset();
               }}
             >
-              确认更换
+              {copy.confirmReplace}
             </Button>
           </DialogFooter>
         </DialogContent>

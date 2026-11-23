@@ -252,6 +252,10 @@ async function openEditor(page: Page, file = 'photo.png'): Promise<void> {
   await expect(page.getByRole('heading', { name: '选择一个滤镜' })).toBeVisible();
 }
 
+test.beforeEach(async ({ page }) => {
+  await page.route('**://hm.baidu.com/**', (route) => route.abort());
+});
+
 test.describe('EasyPic local editor', () => {
   test('uploads PNG, edits locally and downloads original dimensions', async ({ page }) => {
     const requests: Request[] = [];

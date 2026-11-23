@@ -1,5 +1,8 @@
 import { useRef, useState, type DragEvent, type KeyboardEvent } from 'react';
 import { ImagePlus, LockKeyhole } from 'lucide-react';
+import type { AppErrorCode } from '../lib/app-error';
+import { fill } from '../lib/messages';
+import { useMessages } from '../locale-context';
 
 const ACCEPTED_TYPES = '.jpg,.jpeg,.png,image/jpeg,image/png';
 
@@ -22,23 +25,25 @@ export function UploadScreen({
   progress = 0,
   error = null,
 }: UploadScreenProps) {
+  const copy = useMessages();
   const inputRef = useRef<HTMLInputElement>(null);
   const dragDepth = useRef(0);
   const [dragging, setDragging] = useState(false);
-  const [validationError, setValidationError] = useState<string | null>(null);
+  const [validationCode, setValidationCode] = useState<AppErrorCode | null>(null);
+  const validationError = validationCode ? copy.errors[validationCode] : null;
 
   const acceptFiles = (files: FileList | ReadonlyArray<File>): void => {
     if (busy) return;
     if (files.length !== 1) {
-      setValidationError('一次只能处理一张照片。');
+      setValidationCode('file-count');
       return;
     }
     const file = files[0];
     if (!file || !isSupported(file)) {
-      setValidationError('请选择 JPG 或 PNG 照片。');
+      setValidationCode('file-type');
       return;
     }
-    setValidationError(null);
+    setValidationCode(null);
     onFile(file);
   };
 
@@ -79,14 +84,14 @@ export function UploadScreen({
       <section className="upload-card" aria-labelledby="upload-title">
         <div className="brand-mark" aria-hidden="true">EP</div>
         <p className="eyebrow">EasyPic</p>
-        <h1 id="upload-title">让照片呈现你想要的质感</h1>
-        <p className="upload-intro">选择一张照片，在浏览器里预览并应用精选滤镜。</p>
+        <h1 id="upload-title">{copy.uploadTitle}</h1>
+        <p className="upload-intro">{copy.uploadIntro}</p>
 
         <div
           className="upload-dropzone"
           role="button"
           tabIndex={busy ? -1 : 0}
-          aria-label="上传照片"
+          aria-label={copy.uploadAria}
           aria-disabled={busy}
           data-dragging={dragging ? 'true' : 'false'}
           onClick={openPicker}
@@ -97,14 +102,14 @@ export function UploadScreen({
           onDrop={handleDrop}
         >
           <ImagePlus aria-hidden="true" />
-          <strong>{dragging ? '松开即可打开照片' : '点击或拖放照片到这里'}</strong>
-          <span>支持 JPG、PNG，一次一张</span>
+          <strong>{dragging ? copy.dropRelease : copy.dropIdle}</strong>
+          <span>{copy.dropHint}</span>
           <input
             ref={inputRef}
             className="visually-hidden"
             type="file"
             accept={ACCEPTED_TYPES}
-            aria-label="选择一张照片"
+            aria-label={copy.fileInput}
             disabled={busy}
             onClick={(event) => event.stopPropagation()}
             onChange={(event) => {
@@ -114,11 +119,11 @@ export function UploadScreen({
           />
         </div>
 
-        <p className="privacy-note"><LockKeyhole aria-hidden="true" />照片不会上传服务器</p>
-        {selectedFileName ? <p className="file-status">已选择：{selectedFileName}</p> : null}
+        <p className="privacy-note"><LockKeyhole aria-hidden="true" />{copy.privacyUpload}</p>
+        {selectedFileName ? <p className="file-status">{fill(copy.selected, { name: selectedFileName })}</p> : null}
         {busy ? (
           <div role="status">
-            <span>正在打开照片 {Math.round(progress * 100)}%</span>
+            <span>{fill(copy.opening, { percent: Math.round(progress * 100) })}</span>
             <progress value={progress} max={1} />
           </div>
         ) : null}

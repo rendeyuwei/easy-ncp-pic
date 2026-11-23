@@ -1,6 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ExportOptions } from '@easypic/image-engine';
 import { buildDownloadName, downloadBytes, type DownloadType } from '../lib/download';
+import { fill } from '../lib/messages';
+import { useMessages } from '../locale-context';
 import { Button } from './ui/button';
 import {
   Dialog,
@@ -34,28 +36,31 @@ export function ExportDialog({
   busy,
   onExport,
 }: ExportDialogProps) {
+  const copy = useMessages();
   const [type, setType] = useState<DownloadType>(sourceType);
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
   const exporting = busy || submitting;
+  const wasOpen = useRef(false);
 
   useEffect(() => {
-    if (open) {
+    if (open && !wasOpen.current) {
       setType(sourceType);
-      setError(null);
+      setFailed(false);
     }
+    wasOpen.current = open;
   }, [open, sourceType]);
 
   const exportPhoto = async (): Promise<void> => {
     setSubmitting(true);
-    setError(null);
+    setFailed(false);
     try {
       const quality = type === 'image/jpeg' ? 0.92 : undefined;
       const bytes = await onExport({ type, quality });
       downloadBytes(bytes, type, buildDownloadName(sourceName, type));
       onOpenChange(false);
     } catch {
-      setError('导出失败。编辑状态已保留，请重试。');
+      setFailed(true);
     } finally {
       setSubmitting(false);
     }
@@ -65,26 +70,26 @@ export function ExportDialog({
     <Dialog open={open} onOpenChange={(nextOpen) => !exporting && onOpenChange(nextOpen)}>
       <DialogContent aria-describedby="export-description" showClose={!exporting}>
         <DialogHeader>
-          <DialogTitle>导出照片</DialogTitle>
+          <DialogTitle>{copy.exportTitle}</DialogTitle>
           <DialogDescription id="export-description">
-            按原始尺寸导出 · <span>{width} × {height} 像素</span>
+            {copy.exportLead} <span>{fill(copy.exportPixels, { width, height })}</span>
           </DialogDescription>
         </DialogHeader>
 
         <fieldset className="export-formats" disabled={exporting}>
-          <legend>文件格式</legend>
+          <legend>{copy.formatLegend}</legend>
           <label>
             <input
               type="radio"
               name="export-type"
               value="image/jpeg"
-              aria-label="JPG"
+              aria-label={copy.jpg}
               checked={type === 'image/jpeg'}
               onChange={() => setType('image/jpeg')}
             />
             <span>
-              <strong>JPG</strong>
-              {type === 'image/jpeg' ? <span>质量 92%</span> : null}
+              <strong>{copy.jpg}</strong>
+              {type === 'image/jpeg' ? <span>{copy.quality}</span> : null}
             </span>
           </label>
           <label>
@@ -92,26 +97,26 @@ export function ExportDialog({
               type="radio"
               name="export-type"
               value="image/png"
-              aria-label="PNG"
+              aria-label={copy.png}
               checked={type === 'image/png'}
               onChange={() => setType('image/png')}
             />
-            <span><strong>PNG</strong> · 无损</span>
+            <span><strong>{copy.png}</strong> · {copy.lossless}</span>
           </label>
         </fieldset>
 
         {exporting ? (
           <div className="export-progress" role="status" aria-live="polite">
-            <span>正在导出 {Math.round(progress * 100)}%</span>
+            <span>{fill(copy.exportingProgress, { percent: Math.round(progress * 100) })}</span>
             <progress value={progress} max={1} />
           </div>
         ) : null}
-        {error ? <p role="alert">{error}</p> : null}
+        {failed ? <p role="alert">{copy.errors['export-failed']}</p> : null}
 
         <DialogFooter>
-          <Button variant="secondary" disabled={exporting} onClick={() => onOpenChange(false)}>取消</Button>
+          <Button variant="secondary" disabled={exporting} onClick={() => onOpenChange(false)}>{copy.cancel}</Button>
           <Button disabled={exporting} onClick={() => void exportPhoto()}>
-            {exporting ? '正在导出…' : '导出照片'}
+            {exporting ? copy.exporting : copy.exportPhoto}
           </Button>
         </DialogFooter>
       </DialogContent>

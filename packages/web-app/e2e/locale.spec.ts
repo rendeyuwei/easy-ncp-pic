@@ -146,7 +146,12 @@ test.describe('production language entries', () => {
     expect(zhHtml).toContain('hreflang="x-default" href="https://rende.fun/easypic/en/"');
     expect(zhHtml).toContain('name="rf-mount" content="/easypic/"');
     expect(zhHtml).toContain('data-tool="easypic"');
-    expect(zhHtml).toContain('src="/shell/lang.js"');
+    expect(zhHtml).toContain('src="/shell/lang.3effebca35bf58244e77657ead34de9f6afb4416ffdc3ba5a0bbcd4f2933c70d.js"');
+    expect(zhHtml).toContain('src="/shell/topbar.4a304e017601ad56e80a5c39886c186fa462161ce585d093ae92c4cfc17edd7b.js"');
+    expect(zhHtml).not.toContain('src="/shell/lang.js"');
+    expect(zhHtml).not.toContain('src="/shell/topbar.js"');
+    expect(enHtml).toContain('src="/shell/topbar.4a304e017601ad56e80a5c39886c186fa462161ce585d093ae92c4cfc17edd7b.js"');
+    expect(enHtml).not.toContain('src="/shell/topbar.js"');
     expect(zhHtml).not.toContain('preview curated filters');
     expect(enHtml).toContain('lang="en"');
     expect(enHtml).toContain('EasyPic — preview curated filters on a photo in your browser.');
@@ -197,7 +202,7 @@ test.describe('production language entries', () => {
     await page.goto('/easypic/en/#direct');
     await expect(page).toHaveURL(/\/easypic\/en\/#direct/);
     await page.getByRole('button', { name: 'Tools' }).click();
-    await expect(page.locator('.rf-menu a').first()).toHaveAttribute('href', '/easypic/');
+    await expect(page.locator('.rf-menu a').first()).toHaveAttribute('href', '/easypic/en/');
     await page.evaluate(() => { (window as Window & { __easypicDoc?: number }).__easypicDoc = 1; });
     await page.getByRole('link', { name: '中文' }).click();
     await expect(page).toHaveURL(/\/easypic\/\?lang=zh#direct/);

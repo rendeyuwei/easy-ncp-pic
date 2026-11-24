@@ -9,8 +9,8 @@
 3. 只有点击共享顶栏切换器才写入偏好。EasyPic 不另做一套切换器，也不另写存储键。
 4. 自动跳转只发生在「当前挂载点下、路径不是 `en/`、也没有 `lang=zh`」的页面，方向只有到对应的 `en/`。英文页不自动跳回。query（去掉或追加 `lang`）和 hash、`en/` 之后的剩余路径都保留。
 5. 存储被禁用时，明确的 `?lang=zh` 仍停在中文；切换仍靠链接本身完成。跨站链接的 `?lang=zh` 继承由共享 `siteHref` 负责，EasyPic 不改 `window.rfLang`。
-6. 两份静态 HTML 各自带 `lang`、自指 canonical、`hreflang="zh-CN|en|x-default"`。`x-default` 指向英文。中文页在这些 link 之后同步加载 `/shell/lang.js`，再决定是否进入英文。统计脚本先看 `rfLang.leaving`，再看本站兜底标志。
-7. 顶栏仍是 `/shell/topbar.js`，不设 `data-home`。增加 `data-tool="easypic"`，让工具标记不依赖路径猜测。品牌名保持 EasyPic。
+6. 两份静态 HTML 各自带 `lang`、自指 canonical、`hreflang="zh-CN|en|x-default"`。`x-default` 指向英文。中文页在这些 link 之后同步加载带 sha256 的 `/shell/lang.<sha256>.js`，再决定是否进入英文。统计脚本先看 `rfLang.leaving`，再看本站兜底标志。
+7. 顶栏是 `/shell/topbar.<sha256>.js`，不设 `data-home`，也不在页面地址上加版本。增加 `data-tool="easypic"`。品牌名保持 EasyPic。`v` 仍是 2。
 
 ## 2. 本站类型
 

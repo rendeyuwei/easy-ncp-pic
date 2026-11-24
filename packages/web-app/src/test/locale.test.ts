@@ -22,6 +22,7 @@ import {
   type AppLang,
 } from '../lib/locale';
 
+// Actual lang.js from rende-site fdaa701. shell-topbar.js is that same build's topbar.
 const shellLang = readFileSync(resolve(process.cwd(), 'src/test/fixtures/shell-lang.js'), 'utf8');
 
 interface SharedHost {
@@ -202,7 +203,7 @@ describe('shared lang.js contract', () => {
       languages: ['en-GB'],
       offersEn: true,
     });
-    expect(host.rf.sites.find((site) => site.id === 'easypic')?.en).toBe(false);
+    expect(host.rf.sites.find((site) => site.id === 'easypic')?.en).toBe(true);
     expect(host.rf.place('/easypic').site.id).toBe('easypic');
     expect(host.rf.place('/easypic/en/work')).toMatchObject({ lang: 'en', rest: 'work' });
     expect(host.rf.match(['fr-FR', 'zh-TW', 'en'])).toBe('zh');

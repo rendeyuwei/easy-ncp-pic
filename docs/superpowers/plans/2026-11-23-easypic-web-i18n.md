@@ -7,7 +7,7 @@
 - 公共站现在只有 `packages/web-app/index.html`，`lang="zh-CN"`，文案写在组件里。
 - Vite `base` 来自 `EASYPIC_DEPLOY_PREFIX`。`webPath` / `webBasepath` 已把 API 放在前缀下。
 - 路由只有 TanStack 的 `/`，`basepath` 是部署前缀。
-- 顶栏标签由 `preserveShellTopbarHtml` 固定成站点根的 `/shell/topbar.js`。
+- 顶栏标签由 `preserveShellTopbarHtml` 固定成站点根的 `/shell/topbar.<sha256>.js`。中文页的语言脚本同样钉住 `/shell/lang.<sha256>.js`。
 - `use-theme` 直接读写 `localStorage`，存储抛错时首屏会中断。
 - 共享语言脚本尚未进入生产。对照物是 rende-site `64701ced2b3e495f8e5237148096a5a665e41c17` 的 `dist/shell/lang.js`，已放入 `packages/web-app/src/test/fixtures/shell-lang.js`。该脚本里 easypic 的 `en` 仍是 `false`。
 
